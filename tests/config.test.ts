@@ -1,0 +1,53 @@
+import { describe, expect, test } from 'vitest';
+import { loadConfig } from '../src/config.js';
+
+const base = {
+  WARCON_BASE_URL: 'http://warcon:3000/',
+  PANEL_PUBLIC_URL: 'https://panel.example.com/',
+  WARCON_TOKEN: 'tok',
+  DISCORD_TOKEN: 'dtok',
+  DISCORD_CHANNEL_ID: '111',
+  DISCORD_MOD_ROLE_ID: '222'
+};
+
+describe('loadConfig', () => {
+  test('applies documented defaults', () => {
+    const c = loadConfig({ ...base });
+    expect(c.pollIntervalMs).toBe(30000);
+    expect(c.kdPollIntervalMs).toBe(3600000);
+    expect(c.teamKillPingAt).toBe(3);
+    expect(c.kdThreshold).toBe(4.0);
+    expect(c.kdMinMatches).toBe(5);
+    expect(c.kdMinMinutes).toBe(60);
+    expect(c.kdRange).toBe('30d');
+    expect(c.kdCooldownDays).toBe(7);
+    expect(c.feedQuietMinutes).toBe(30);
+    expect(c.statePath).toBe('/data/state.json');
+    expect(c.serverIds).toEqual([]);
+  });
+
+  test('strips trailing slashes from both origins', () => {
+    const c = loadConfig({ ...base });
+    expect(c.warconBaseUrl).toBe('http://warcon:3000');
+    expect(c.panelPublicUrl).toBe('https://panel.example.com');
+  });
+
+  test('parses SERVER_IDS into a trimmed list', () => {
+    const c = loadConfig({ ...base, SERVER_IDS: 'a , b,, c ' });
+    expect(c.serverIds).toEqual(['a', 'b', 'c']);
+  });
+
+  test('names every missing required variable at once', () => {
+    expect(() => loadConfig({})).toThrow(/WARCON_BASE_URL[\s\S]*DISCORD_MOD_ROLE_ID/);
+  });
+
+  test('rejects a non-positive numeric override', () => {
+    expect(() => loadConfig({ ...base, POLL_INTERVAL_MS: '0' })).toThrow(/POLL_INTERVAL_MS/);
+  });
+
+  test('requires both Cloudflare values or neither', () => {
+    expect(() => loadConfig({ ...base, CF_ACCESS_CLIENT_ID: 'x' })).toThrow(
+      /CF_ACCESS_CLIENT_SECRET/
+    );
+  });
+});
