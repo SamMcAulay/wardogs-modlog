@@ -911,7 +911,7 @@ Expected: FAIL — cannot resolve `../src/state.js`.
 
 ```ts
 import { readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 /** Per-server ring of recently seen kill event ids (spec §7). */
 export const SEEN_KILL_CAP = 500;
@@ -968,12 +968,22 @@ export function serverState(state: State, serverId: string): ServerState {
   return fresh;
 }
 
-/** Push ids newest-first, skipping duplicates, evicting past the cap. */
+/**
+ * Prepend ids, preserving their order, skipping duplicates, evicting past the cap.
+ *
+ * `ids` arrives newest-first (the kills API's own order) and the ring is
+ * newest-first, so the batch is prepended as a block. Unshifting one at a time in a
+ * loop would reverse the batch and leave its OLDEST entry at the front.
+ */
 export function rememberKillIds(s: ServerState, ids: string[]): void {
+  const known = new Set(s.seenKillIds);
+  const fresh: string[] = [];
   for (const id of ids) {
-    if (s.seenKillIds.includes(id)) continue;
-    s.seenKillIds.unshift(id);
+    if (known.has(id)) continue;
+    known.add(id);
+    fresh.push(id);
   }
+  s.seenKillIds = [...fresh, ...s.seenKillIds];
   if (s.seenKillIds.length > SEEN_KILL_CAP) s.seenKillIds.length = SEEN_KILL_CAP;
 }
 
@@ -1009,7 +1019,7 @@ export async function loadState(path: string): Promise<State> {
 
 /** Write to a temp file in the same directory, then rename — rename is atomic. */
 export async function saveState(path: string, state: State): Promise<void> {
-  const tmp = join(dirname(path), `${path.split('/').pop()}.tmp`);
+  const tmp = join(dirname(path), `${basename(path)}.tmp`);
   await writeFile(tmp, JSON.stringify({ ...state, cold: undefined }, null, 2), 'utf8');
   await rename(tmp, path);
 }
@@ -2545,6 +2555,43 @@ describe('runCycle', () => {
     expect(serverState(state, 's1').lastAuditId).toBe(0);
   });
 
+  test('a failed post also rolls back the K/D cooldown', async () => {
+    const state = emptyState();
+    state.cold = false;
+    await runCycle(
+      deps({
+        state,
+        runKd: true,
+        sources: {
+          kills: async () => [],
+          audit: async () => [],
+          watchlist: async () => [],
+          kd: async () => [
+            {
+              kind: 'highKd',
+              serverId: 's1',
+              at: '2026-09-24T12:00:00.000Z',
+              steamId: '765',
+              name: 'Alpha',
+              kd: 5.2,
+              kills: 52,
+              deaths: 10,
+              matches: 9,
+              minutes: 400
+            }
+          ]
+        },
+        poster: {
+          post: async () => {
+            throw new Error('discord 500');
+          }
+        }
+      })
+    );
+    // Nobody was told, so the seven-day cooldown must not have started.
+    expect(state.kdAlerted['765']).toBeUndefined();
+  });
+
   test('a successful post keeps the advanced cursor', async () => {
     const state = emptyState();
     state.cold = false;
@@ -2625,7 +2672,12 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
 
   for (const serverId of deps.serverIds) {
     const s = serverState(deps.state, serverId);
+    // escalate() writes to BOTH the server entry and the global kdAlerted map, so a
+    // failed post has to roll back both — otherwise a K/D alert nobody received still
+    // starts its cooldown and the player goes unreported for days. Snapshotting
+    // kdAlerted per server (not once per cycle) preserves earlier servers' alerts.
     const snapshot = structuredClone(s);
+    const kdSnapshot = { ...deps.state.kdAlerted };
 
     const collected: ModEvent[] = [];
     const run = async (name: string, fn: () => Promise<ModEvent[]>): Promise<void> => {
@@ -2661,7 +2713,10 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
       }
     }
 
-    if (failed) deps.state.servers[serverId] = snapshot;
+    if (failed) {
+      deps.state.servers[serverId] = snapshot;
+      deps.state.kdAlerted = kdSnapshot;
+    }
   }
 
   deps.state.cold = false;
@@ -2860,6 +2915,8 @@ Expected: FAIL — cannot resolve `../src/preflight.js`.
 - [ ] **Step 3: Implement `src/preflight.ts`**
 
 ```ts
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { loadConfig, type Config } from './config.js';
 import { CloudflareBlockedError, WarconAuthError, WarconClient } from './warcon.js';
 
@@ -2942,7 +2999,19 @@ async function main(): Promise<void> {
 }
 
 // Only run as a CLI, so the tests can import checkAll without side effects.
-if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop() ?? '')) {
+// Compare resolved paths: matching on the basename alone would also fire when a
+// test runner's argv happened to end the same way.
+const invokedDirectly = (): boolean => {
+  const arg = process.argv[1];
+  if (!arg) return false;
+  try {
+    return realpathSync(arg) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+};
+
+if (invokedDirectly()) {
   main().catch((err) => {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
