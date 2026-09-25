@@ -10,6 +10,7 @@ export interface Config {
   discordChannelId: string;
   discordModRoleId: string;
   serverIds: string[];
+  serverLabels: Record<string, string>;
   pollIntervalMs: number;
   kdPollIntervalMs: number;
   requestTimeoutMs: number;
@@ -21,6 +22,22 @@ export interface Config {
   kdRange: string;
   kdCooldownDays: number;
   feedQuietMinutes: number;
+}
+
+function parseServerLabels(raw: string): Record<string, string> {
+  const labels: Record<string, string> = {};
+  for (const rawEntry of raw.split(',')) {
+    const entry = rawEntry.trim();
+    if (!entry) continue;
+    const eq = entry.indexOf('=');
+    const id = eq === -1 ? '' : entry.slice(0, eq).trim();
+    const label = eq === -1 ? '' : entry.slice(eq + 1).trim();
+    if (eq === -1 || !id || !label) {
+      throw new Error(`SERVER_LABELS entry "${entry}" is not serverId=Label`);
+    }
+    labels[id] = label;
+  }
+  return labels;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -74,6 +91,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
+    serverLabels: parseServerLabels(env.SERVER_LABELS ?? ''),
     pollIntervalMs: num('POLL_INTERVAL_MS', 30_000),
     kdPollIntervalMs: num('KD_POLL_INTERVAL_MS', 3_600_000),
     requestTimeoutMs: num('REQUEST_TIMEOUT_MS', 10_000),

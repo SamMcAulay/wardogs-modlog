@@ -2,7 +2,10 @@ import { describe, expect, test } from 'vitest';
 import { buildMessage, type LinkConfig } from '../src/discord.js';
 import type { Decision } from '../src/events.js';
 
-const links: LinkConfig = { panelPublicUrl: 'https://panel.example.com' };
+const links: LinkConfig = {
+  panelPublicUrl: 'https://panel.example.com',
+  serverLabels: { s1: 'NA#3' }
+};
 const ROLE = '999';
 
 const teamKill: Decision = {
@@ -115,5 +118,58 @@ describe('buildMessage', () => {
       expect(f.name.length).toBeLessThanOrEqual(256);
       expect(f.value.length).toBeLessThanOrEqual(1024);
     }
+  });
+
+  test('a team kill title is prefixed with the server label', () => {
+    const m = buildMessage(teamKill, links, ROLE);
+    expect(m.embeds[0]!.title).toMatch(/^NA#3 · Team kill — Alpha/);
+  });
+
+  test('the feed-quiet title is prefixed with the server label', () => {
+    const m = buildMessage(
+      {
+        ping: false,
+        event: {
+          kind: 'feedQuiet',
+          serverId: 's1',
+          at: '2026-09-24T12:00:00.000Z',
+          lastFeedAt: null
+        }
+      },
+      links,
+      ROLE
+    );
+    expect(m.embeds[0]!.title).toBe('NA#3 · Kill feed has gone quiet');
+  });
+
+  test('a pinging message names the server in the mention line', () => {
+    const m = buildMessage(teamKill, links, ROLE);
+    expect(m.content).toBe(`<@&${ROLE}> **NA#3**`);
+  });
+
+  test('a non-pinging message still has no content', () => {
+    const m = buildMessage({ ...teamKill, ping: false }, links, ROLE);
+    expect(m.content).toBeUndefined();
+  });
+
+  test('an unlabelled server falls back to the first eight characters of its id', () => {
+    const m = buildMessage(
+      {
+        ping: false,
+        event: { ...teamKill.event, serverId: 'c83bc8e1-ef6f-4d55-9398-b1a6f6faa2a8' }
+      },
+      links,
+      ROLE
+    );
+    expect(m.embeds[0]!.title).toMatch(/^c83bc8e1 · /);
+  });
+
+  test('the 256-character title limit holds with a label prefix and a long name', () => {
+    const long: Decision = {
+      ping: false,
+      event: { ...teamKill.event, killer: { ...teamKill.event.killer, name: 'z'.repeat(500) } }
+    };
+    const m = buildMessage(long, links, ROLE);
+    expect(m.embeds[0]!.title!.length).toBeLessThanOrEqual(256);
   });
 });

@@ -5,6 +5,12 @@ import type { Decision, ModEvent } from './events.js';
 export interface LinkConfig {
   /** the origin a mod's browser opens — never WARCON_BASE_URL */
   panelPublicUrl: string;
+  serverLabels: Record<string, string>;
+}
+
+/** The short name staff know a server by; falls back to its id's first 8 chars (spec §8.5). */
+export function serverLabel(serverId: string, labels: Record<string, string>): string {
+  return labels[serverId] ?? serverId.slice(0, 8);
 }
 
 export interface EmbedField {
@@ -54,7 +60,7 @@ function embedFor(e: ModEvent, links: LinkConfig): Embed {
   switch (e.kind) {
     case 'teamKill':
       return {
-        title: clamp(`Team kill — ${e.killer.name} (${e.count})`, 256),
+        title: `Team kill — ${e.killer.name} (${e.count})`,
         url: `${base}/kills?killer=${encodeURIComponent(e.killer.steamId)}&kind=teamKill`,
         color: COLOR.teamKill,
         timestamp: e.at,
@@ -70,7 +76,7 @@ function embedFor(e: ModEvent, links: LinkConfig): Embed {
     case 'adminAction': {
       const verb = { 'rcon.kick': 'Kick', 'rcon.ban': 'Ban', 'rcon.unban': 'Unban' }[e.action];
       return {
-        title: clamp(`${verb} by ${e.actorName}`, 256),
+        title: `${verb} by ${e.actorName}`,
         url: `${base}/players/${encodeURIComponent(e.target)}`,
         color: COLOR.adminAction,
         timestamp: e.at,
@@ -80,7 +86,7 @@ function embedFor(e: ModEvent, links: LinkConfig): Embed {
 
     case 'watchedJoin':
       return {
-        title: clamp(`Watched player joined — ${e.name}`, 256),
+        title: `Watched player joined — ${e.name}`,
         // The reason needs players.notes, which this key does not hold (spec §5.3).
         url: `${base}/players/${encodeURIComponent(e.steamId)}`,
         color: COLOR.watchedJoin,
@@ -91,7 +97,7 @@ function embedFor(e: ModEvent, links: LinkConfig): Embed {
 
     case 'highKd':
       return {
-        title: clamp(`High K/D — ${e.name}`, 256),
+        title: `High K/D — ${e.name}`,
         url: `${base}/players/${encodeURIComponent(e.steamId)}`,
         color: COLOR.highKd,
         timestamp: e.at,
@@ -122,9 +128,11 @@ export function buildMessage(
   modRoleId: string
 ): DiscordMessage {
   const embed = embedFor(d.event, links);
+  const label = serverLabel(d.event.serverId, links.serverLabels);
+  embed.title = clamp(`${label} · ${embed.title ?? ''}`, 256);
   return d.ping
     ? {
-        content: `<@&${modRoleId}>`,
+        content: `<@&${modRoleId}> **${label}**`,
         embeds: [embed],
         allowed_mentions: { parse: [], roles: [modRoleId] }
       }

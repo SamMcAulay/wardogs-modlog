@@ -24,6 +24,7 @@ describe('loadConfig', () => {
     expect(c.feedQuietMinutes).toBe(30);
     expect(c.statePath).toBe('/data/state.json');
     expect(c.serverIds).toEqual([]);
+    expect(c.serverLabels).toEqual({});
   });
 
   test('strips trailing slashes from both origins', () => {
@@ -35,6 +36,22 @@ describe('loadConfig', () => {
   test('parses SERVER_IDS into a trimmed list', () => {
     const c = loadConfig({ ...base, SERVER_IDS: 'a , b,, c ' });
     expect(c.serverIds).toEqual(['a', 'b', 'c']);
+  });
+
+  test('parses SERVER_LABELS into a trimmed map, skipping empty entries', () => {
+    const c = loadConfig({ ...base, SERVER_LABELS: ' a = EU#1 , b=NA#3 ,, ' });
+    expect(c.serverLabels).toEqual({ a: 'EU#1', b: 'NA#3' });
+  });
+
+  test('keeps everything after the first = in a label', () => {
+    const c = loadConfig({ ...base, SERVER_LABELS: 'a=x=y' });
+    expect(c.serverLabels).toEqual({ a: 'x=y' });
+  });
+
+  test('rejects a SERVER_LABELS entry with no =', () => {
+    expect(() => loadConfig({ ...base, SERVER_LABELS: 'a=EU#1,broken' })).toThrow(
+      /SERVER_LABELS entry "broken" is not serverId=Label/
+    );
   });
 
   test('names every missing required variable at once', () => {
