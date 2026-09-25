@@ -27,14 +27,46 @@ export interface CycleDeps {
 }
 
 /**
+ * A retry identity for a decision's event — `eventKey` minus the cycle timestamp.
+ *
+ * `watchedJoin`/`highKd`/`feedQuiet` eventKeys embed `at`, which differs when the same
+ * underlying event is re-read a cycle later (after a rollback). A retry identity must
+ * stay the same across that re-read so `postedBeforeFailure` can recognise it.
+ */
+export function retryKey(e: ModEvent): string {
+  switch (e.kind) {
+    case 'teamKill':
+      return `teamKill:${e.eventId}`;
+    case 'adminAction':
+      return `adminAction:${e.auditId}`;
+    case 'watchedJoin':
+      return `watchedJoin:${e.serverId}:${e.steamId}`;
+    case 'highKd':
+      return `highKd:${e.serverId}:${e.steamId}`;
+    case 'feedQuiet':
+      return `feedQuiet:${e.serverId}`;
+  }
+}
+
+/**
  * One pass over every server.
  *
  * Cursor safety (spec §9): sources advance their cursors inside the state object as
  * they read. If a post then fails we restore that server's pre-cycle snapshot, so the
  * next cycle re-reads and re-reports rather than silently dropping the event.
+ *
+ * That whole-server rollback is per-cycle, not per-event: if event A posts and event B
+ * (read in the same batch) then fails to post, rolling back naively would re-post A
+ * next cycle too. `postedBeforeFailure` remembers A's retry identity across the
+ * rollback so the retry cycle skips it — scoped to one retry: a server that completes
+ * a cycle without a failure clears the list, so a genuine later recurrence (e.g. the
+ * same player rejoining) still alerts.
  */
 export async function runCycle(deps: CycleDeps): Promise<void> {
   const cold = deps.state.cold;
+  // A cold cycle in which a source failed must not report the backlog as new once
+  // things recover (spec §7) — stay cold until one fully clean cold cycle succeeds.
+  let coldSourceFailed = false;
 
   for (const serverId of deps.serverIds) {
     const s = serverState(deps.state, serverId);
@@ -52,6 +84,7 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
       } catch (err) {
         // One source failing must not stop the others, or one server the rest.
         deps.logger.warn(`[${serverId}] ${name}: ${err instanceof Error ? err.message : err}`);
+        if (cold) coldSourceFailed = true;
       }
     };
 
@@ -65,10 +98,24 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
 
     const decisions = escalate(collected, deps.state, deps.escalateConfig, deps.now);
 
+    // What this server had already delivered before the start of this cycle (i.e. a
+    // pending retry from a failure last cycle) — read off the pre-cycle snapshot, not
+    // the live entry, though sources never touch this field either way.
+    const initialPosted = new Set(snapshot.postedBeforeFailure);
+    const delivered = new Set(initialPosted);
+
     let failed = false;
     for (const d of decisions) {
+      const key = retryKey(d.event);
+      if (initialPosted.has(key)) {
+        // Already delivered before a prior failure in this same retry — count it as
+        // delivered again without posting it a second time.
+        deps.logger.info(`[${serverId}] ${key} already posted before a failure, skipping`);
+        continue;
+      }
       try {
         await deps.poster.post(buildMessage(d, deps.links, deps.modRoleId));
+        delivered.add(key);
         deps.logger.info(`[${serverId}] posted ${eventKey(d.event)}${d.ping ? ' (ping)' : ''}`);
       } catch (err) {
         deps.logger.error(
@@ -80,11 +127,14 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
     }
 
     if (failed) {
-      deps.state.servers[serverId] = snapshot;
+      deps.state.servers[serverId] = { ...snapshot, postedBeforeFailure: Array.from(delivered) };
       deps.state.kdAlerted = kdSnapshot;
+    } else {
+      // A clean cycle closes out the retry: one-cycle scope only.
+      s.postedBeforeFailure = [];
     }
   }
 
-  deps.state.cold = false;
+  deps.state.cold = cold && coldSourceFailed;
   await deps.save(deps.state);
 }

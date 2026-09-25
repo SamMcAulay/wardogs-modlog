@@ -21,6 +21,12 @@ export interface ServerState {
   feedQuietWarned: boolean;
   /** ISO time the server last transitioned to empty, or null (spec §8.4) */
   lastEmptyAt: string | null;
+  /**
+   * Retry identities (runner.ts's `retryKey`) of decisions that posted successfully
+   * earlier in a cycle that later failed. Scoped to a single retry: the runner clears
+   * it once a cycle for this server completes without a failure.
+   */
+  postedBeforeFailure: string[];
 }
 
 export interface State {
@@ -42,7 +48,8 @@ export function emptyServerState(): ServerState {
     lastEventTime: 0,
     teamKills: {},
     feedQuietWarned: false,
-    lastEmptyAt: null
+    lastEmptyAt: null,
+    postedBeforeFailure: []
   };
 }
 

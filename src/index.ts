@@ -71,18 +71,35 @@ async function main(): Promise<void> {
     });
   };
 
-  await cycle();
-  const timer = setInterval(() => {
-    void cycle().catch((err) => log.error(err instanceof Error ? err.message : String(err)));
-  }, config.pollIntervalMs);
+  // Self-scheduling rather than setInterval: the next cycle is only queued once this
+  // one has fully settled, so a slow cycle (6 servers x 4 sources, each up to
+  // REQUEST_TIMEOUT_MS) can never overlap a still-running one and mutate the shared
+  // state object concurrently. Every cycle — including the first — is error-contained
+  // identically: log and keep going, never let a transient failure exit the process.
+  let timer: NodeJS.Timeout | undefined;
+  let stopping = false;
+
+  const loop = async (): Promise<void> => {
+    try {
+      await cycle();
+    } catch (err) {
+      log.error(err instanceof Error ? err.message : String(err));
+    }
+    if (!stopping) timer = setTimeout(() => void loop(), config.pollIntervalMs);
+  };
 
   const shutdown = (signal: string): void => {
     log.info(`${signal} received, shutting down`);
-    clearInterval(timer);
+    stopping = true;
+    if (timer) clearTimeout(timer);
     process.exit(0);
   };
+  // Registered before the first cycle runs, so a signal during that first cycle is
+  // still handled rather than falling through to the default (immediate exit).
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+
+  await loop();
 }
 
 main().catch((err) => {
