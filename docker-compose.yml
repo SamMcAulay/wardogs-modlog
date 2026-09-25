@@ -1,0 +1,27 @@
+services:
+  modlog:
+    build: .
+    image: wardogs-modlog:latest
+    container_name: wardogs-modlog
+    restart: unless-stopped
+    # Secrets live only on the VPS. This file is never built into the image.
+    env_file: .env
+    volumes:
+      - modlog-state:/data
+    networks:
+      - warcon
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  modlog-state:
+
+networks:
+  warcon:
+    external: true
+    # Warcon's compose declares no network, so it gets the project default,
+    # named after its directory: /home/debian/warcon -> warcon_default.
+    name: warcon_default
