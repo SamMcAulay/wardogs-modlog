@@ -38,6 +38,57 @@ export async function checkAll(
     detail: res?.ok ? 'accepted' : `GET /users/@me returned ${res?.status ?? 'no response'}`
   });
 
+  // Existence and visibility only, never permission arithmetic — a channel the
+  // bot can't see, or a mod role that no longer exists, both make posting fail
+  // silently later (spec §10).
+  const channelRes = await discordFetch(`https://discord.com/api/v10/channels/${config.discordChannelId}`, {
+    headers: { Authorization: `Bot ${config.discordToken}` }
+  }).catch(() => null);
+
+  let channelOk = false;
+  let guildId: string | undefined;
+
+  if (channelRes?.ok) {
+    const channelBody = (await channelRes.json()) as { name?: string; guild_id?: string };
+    guildId = channelBody.guild_id;
+    channelOk = true;
+    results.push({ name: 'discord channel', ok: true, detail: `visible (#${channelBody.name})` });
+  } else {
+    results.push({
+      name: 'discord channel',
+      ok: false,
+      detail: `GET /channels/${config.discordChannelId} returned ${channelRes?.status ?? 'no response'} — the bot cannot see that channel`
+    });
+  }
+
+  if (!channelOk) {
+    results.push({ name: 'discord mod role', ok: false, detail: 'skipped — channel not visible' });
+  } else {
+    const rolesRes = await discordFetch(`https://discord.com/api/v10/guilds/${guildId}/roles`, {
+      headers: { Authorization: `Bot ${config.discordToken}` }
+    }).catch(() => null);
+
+    if (!rolesRes?.ok) {
+      results.push({
+        name: 'discord mod role',
+        ok: false,
+        detail: `GET guild roles returned ${rolesRes?.status ?? 'no response'}`
+      });
+    } else {
+      const roles = (await rolesRes.json()) as Array<{ id: string; name: string }>;
+      const role = roles.find((r) => r.id === config.discordModRoleId);
+      results.push(
+        role
+          ? { name: 'discord mod role', ok: true, detail: `found (@${role.name})` }
+          : {
+              name: 'discord mod role',
+              ok: false,
+              detail: `role ${config.discordModRoleId} not found in the channel's guild`
+            }
+      );
+    }
+  }
+
   for (const id of config.serverIds) {
     const paths = [
       [`kills (${id})`, `/api/servers/${id}/kills?kind=teamKill&limit=1`],
@@ -52,8 +103,11 @@ export async function checkAll(
     let summary: SummaryBody | undefined;
     for (const [name, path] of paths) {
       try {
-        const body = await client.getJson<unknown>(path);
-        if (path.endsWith('/summary')) summary = body as SummaryBody;
+        if (path.endsWith('/summary')) {
+          summary = await client.getJson<SummaryBody>(path);
+        } else {
+          await client.getJson<unknown>(path);
+        }
         results.push({ name, ok: true, detail: 'answered' });
       } catch (err) {
         results.push({ name, ok: false, detail: explain(path, err) });
