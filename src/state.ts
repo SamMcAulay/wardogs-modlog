@@ -19,6 +19,8 @@ export interface ServerState {
   teamKills: Record<string, number>;
   /** whether a feed-quiet warning is currently outstanding */
   feedQuietWarned: boolean;
+  /** ISO time the server last transitioned to empty, or null (spec §8.4) */
+  lastEmptyAt: string | null;
 }
 
 export interface State {
@@ -39,7 +41,8 @@ export function emptyServerState(): ServerState {
     lastFeedAt: null,
     lastEventTime: 0,
     teamKills: {},
-    feedQuietWarned: false
+    feedQuietWarned: false,
+    lastEmptyAt: null
   };
 }
 

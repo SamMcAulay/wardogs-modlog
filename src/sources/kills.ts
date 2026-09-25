@@ -55,9 +55,15 @@ export async function pollKills(
   if (advanced) {
     s.lastFeedAt = body.feedAt;
     s.feedQuietWarned = false;
+  } else if (s.presentSteamIds.length === 0) {
+    // Server is empty; record when that happened, never warn.
+    s.lastEmptyAt = new Date(opts.now).toISOString();
   } else if (body.configured && !s.feedQuietWarned) {
-    const last = s.lastFeedAt ? Date.parse(s.lastFeedAt) : null;
-    const quietFor = last === null ? Infinity : opts.now - last;
+    // Players present, configured, not yet warned: measure quiet from the later of lastFeedAt and lastEmptyAt.
+    const lastFeed = s.lastFeedAt ? Date.parse(s.lastFeedAt) : null;
+    const lastEmpty = s.lastEmptyAt ? Date.parse(s.lastEmptyAt) : null;
+    const quietFrom = lastFeed === null && lastEmpty === null ? null : Math.max(lastFeed ?? 0, lastEmpty ?? 0);
+    const quietFor = quietFrom === null ? Infinity : opts.now - quietFrom;
     if (quietFor > opts.feedQuietMinutes * 60_000) {
       s.feedQuietWarned = true;
       events.push({

@@ -91,6 +91,7 @@ describe('pollKills', () => {
 
   test('warns once when a configured feed has gone quiet', async () => {
     const s = emptyServerState();
+    s.presentSteamIds = ['765'];
     s.lastFeedAt = '2026-09-24T11:00:00.000Z'; // 60 minutes ago
     const stale = body([], { feedAt: '2026-09-24T11:00:00.000Z' });
 
@@ -103,6 +104,7 @@ describe('pollKills', () => {
 
   test('the quiet warning resets once the feed advances', async () => {
     const s = emptyServerState();
+    s.presentSteamIds = ['765'];
     s.lastFeedAt = '2026-09-24T11:00:00.000Z';
     s.feedQuietWarned = true;
     await pollKills(client(body([], { feedAt: '2026-09-24T11:59:30.000Z' })), 's1', s, opts);
@@ -119,5 +121,37 @@ describe('pollKills', () => {
       opts
     );
     expect(events).toHaveLength(0);
+  });
+
+  test('an empty server with a long-stale feed does not warn', async () => {
+    const s = emptyServerState();
+    s.lastFeedAt = '2026-09-24T10:00:00.000Z'; // 120 minutes ago
+    const stale = body([], { feedAt: '2026-09-24T10:00:00.000Z' });
+
+    const events = await pollKills(client(stale), 's1', s, opts);
+    expect(events.filter((e) => e.kind === 'feedQuiet')).toHaveLength(0);
+    expect(s.lastEmptyAt).toBe(new Date(NOW).toISOString());
+  });
+
+  test('a server that was recently empty does not warn yet', async () => {
+    const s = emptyServerState();
+    s.lastFeedAt = '2026-09-24T10:00:00.000Z'; // 120 minutes ago
+    s.lastEmptyAt = new Date(NOW - 5 * 60_000).toISOString(); // 5 minutes ago
+    s.presentSteamIds = ['765']; // now has players
+    const stale = body([], { feedAt: '2026-09-24T10:00:00.000Z' });
+
+    const events = await pollKills(client(stale), 's1', s, opts);
+    expect(events.filter((e) => e.kind === 'feedQuiet')).toHaveLength(0);
+  });
+
+  test('a server empty for longer than FEED_QUIET_MINUTES does warn', async () => {
+    const s = emptyServerState();
+    s.lastFeedAt = '2026-09-24T10:00:00.000Z'; // 120 minutes ago
+    s.lastEmptyAt = new Date(NOW - 31 * 60_000).toISOString(); // 31 minutes ago
+    s.presentSteamIds = ['765']; // now has players
+    const stale = body([], { feedAt: '2026-09-24T10:00:00.000Z' });
+
+    const events = await pollKills(client(stale), 's1', s, opts);
+    expect(events.filter((e) => e.kind === 'feedQuiet')).toHaveLength(1);
   });
 });
