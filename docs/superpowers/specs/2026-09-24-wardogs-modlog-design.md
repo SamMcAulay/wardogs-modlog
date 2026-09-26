@@ -292,6 +292,8 @@ reported as new.
 
 ## 8. Rules
 
+Amended 2026-09-26 by `2026-09-26-tiered-alerts-design.md`: alerts are tiered, only tier 3 (sweat, surge) pings, and team kills no longer ping. Where the two disagree, the amendment wins.
+
 `PING_ON` (added 2026-09-26) lists which of the three pinging kinds actually mention the
 role; `none` silences all of them. A kind left out still posts its embed, and still counts:
 team-kill totals and K/D cooldowns advance exactly as if it pinged, so turning a ping back on
@@ -309,9 +311,7 @@ Because kills are read newest-first and walked backwards, a page must be reverse
 chronological order before counting, or the third team kill would be attributed to the
 wrong event.
 
-Post every team kill without a mention. On the **3rd and every subsequent** team kill
-by the same player in the same match, mention the mod role. Threshold in config
-(`TEAM_KILL_PING_AT`, default 3).
+Post every team kill without a mention or ping (see §8 amendment note).
 
 Kills with `killer === null` are environment deaths and are never team kills;
 `isTeamKill` already excludes self-kills.
@@ -436,8 +436,7 @@ KD_POLL_INTERVAL_MS        3600000
 REQUEST_TIMEOUT_MS         10000
 STATE_PATH                 /data/state.json
 
-PING_ON                    teamKill,watchedJoin,highKd   (or none)
-TEAM_KILL_PING_AT          3
+PING_ON                    sweat,surge   (or none)
 KD_THRESHOLD               4.0
 KD_MIN_MATCHES             5
 KD_MIN_MINUTES             60
