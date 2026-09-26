@@ -1,9 +1,15 @@
 import type { Decision, ModEvent } from './events.js';
 import { serverState, type State } from './state.js';
 
+/** The alert kinds that can mention the mod role. Kicks, bans and feed warnings never do. */
+export const PING_KINDS = ['teamKill', 'watchedJoin', 'highKd'] as const;
+export type PingKind = (typeof PING_KINDS)[number];
+
 export interface EscalateConfig {
   teamKillPingAt: number;
   kdCooldownDays: number;
+  /** PING_ON: kinds left out still post, just without the mention. */
+  pingOn: ReadonlySet<PingKind>;
 }
 
 /**
@@ -32,7 +38,10 @@ export function escalate(
 
         const count = (s.teamKills[event.killer.steamId] ?? 0) + 1;
         s.teamKills[event.killer.steamId] = count;
-        out.push({ event: { ...event, count }, ping: count >= cfg.teamKillPingAt });
+        out.push({
+          event: { ...event, count },
+          ping: count >= cfg.teamKillPingAt && cfg.pingOn.has('teamKill')
+        });
         break;
       }
 
@@ -40,12 +49,12 @@ export function escalate(
         const last = state.kdAlerted[event.steamId];
         if (last !== undefined && now - last < cooldownMs) break; // still cooling down
         state.kdAlerted[event.steamId] = now;
-        out.push({ event, ping: true });
+        out.push({ event, ping: cfg.pingOn.has('highKd') });
         break;
       }
 
       case 'watchedJoin':
-        out.push({ event, ping: true });
+        out.push({ event, ping: cfg.pingOn.has('watchedJoin') });
         break;
 
       case 'adminAction':

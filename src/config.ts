@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { PING_KINDS, type PingKind } from './escalate.js';
 
 export interface Config {
   warconBaseUrl: string;
@@ -11,6 +12,7 @@ export interface Config {
   discordModRoleId: string;
   serverIds: string[];
   serverLabels: Record<string, string>;
+  pingOn: ReadonlySet<PingKind>;
   pollIntervalMs: number;
   kdPollIntervalMs: number;
   requestTimeoutMs: number;
@@ -38,6 +40,25 @@ function parseServerLabels(raw: string): Record<string, string> {
     labels[id] = label;
   }
   return labels;
+}
+
+/** Unset or blank keeps every ping; `none` turns them all off; otherwise a comma list of kinds. */
+function parsePingOn(raw: string): ReadonlySet<PingKind> {
+  const value = raw.trim();
+  if (value === '') return new Set(PING_KINDS);
+  if (value.toLowerCase() === 'none') return new Set();
+  const kinds = new Set<PingKind>();
+  for (const rawEntry of value.split(',')) {
+    const entry = rawEntry.trim();
+    if (!entry) continue;
+    if (!(PING_KINDS as readonly string[]).includes(entry)) {
+      throw new Error(
+        `PING_ON entry "${entry}" is not one of ${PING_KINDS.join(', ')} (or use PING_ON=none)`
+      );
+    }
+    kinds.add(entry as PingKind);
+  }
+  return kinds;
 }
 
 function isHttpUrl(raw: string): boolean {
@@ -107,6 +128,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .map((s) => s.trim())
       .filter(Boolean),
     serverLabels: parseServerLabels(env.SERVER_LABELS ?? ''),
+    pingOn: parsePingOn(env.PING_ON ?? ''),
     pollIntervalMs: num('POLL_INTERVAL_MS', 30_000),
     kdPollIntervalMs: num('KD_POLL_INTERVAL_MS', 3_600_000),
     requestTimeoutMs: num('REQUEST_TIMEOUT_MS', 10_000),

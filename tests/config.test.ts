@@ -25,6 +25,20 @@ describe('loadConfig', () => {
     expect(c.statePath).toBe('/data/state.json');
     expect(c.serverIds).toEqual([]);
     expect(c.serverLabels).toEqual({});
+    expect([...c.pingOn].sort()).toEqual(['highKd', 'teamKill', 'watchedJoin']);
+  });
+
+  test('PING_ON=none turns every ping off', () => {
+    expect(loadConfig({ ...base, PING_ON: 'none' }).pingOn.size).toBe(0);
+  });
+
+  test('PING_ON lists the kinds that ping, trimmed', () => {
+    const c = loadConfig({ ...base, PING_ON: ' watchedJoin , highKd ' });
+    expect([...c.pingOn].sort()).toEqual(['highKd', 'watchedJoin']);
+  });
+
+  test('PING_ON names an unknown kind in its error', () => {
+    expect(() => loadConfig({ ...base, PING_ON: 'teamKill,kicks' })).toThrow(/PING_ON.*"kicks"/);
   });
 
   test('strips trailing slashes from both origins', () => {

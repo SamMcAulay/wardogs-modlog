@@ -25,6 +25,8 @@ async function main(): Promise<void> {
     timeoutMs: config.requestTimeoutMs
   });
 
+  log.info(`pings: ${config.pingOn.size > 0 ? [...config.pingOn].join(', ') : 'off (PING_ON=none)'}`);
+
   const state = await loadState(config.statePath);
   const coldIds = config.serverIds.filter((id) => !state.servers[id]?.warm);
   if (coldIds.length > 0) {
@@ -50,7 +52,8 @@ async function main(): Promise<void> {
       logger: log,
       escalateConfig: {
         teamKillPingAt: config.teamKillPingAt,
-        kdCooldownDays: config.kdCooldownDays
+        kdCooldownDays: config.kdCooldownDays,
+        pingOn: config.pingOn
       },
       links: { panelPublicUrl: config.panelPublicUrl, serverLabels: config.serverLabels },
       modRoleId: config.discordModRoleId,
