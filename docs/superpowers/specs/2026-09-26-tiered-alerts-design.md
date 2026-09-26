@@ -159,6 +159,11 @@ tier-3 pings.
   stamps. Its retry key is `killRate:{serverId}:{steamId}`.
 - **Pruning.** Before saving, `rateAlerted` entries older than the cooldown are pruned, and
   `baselines` older than 24 hours.
+- **Preflight.** Per server, the deploy's preflight reads page 1 of the `SWEAT_RANGE` board
+  sorted by `perHour` (with `RATE_MIN_MINUTES`) and fails unless the panel echoes
+  `query.sort === 'perHour'`: Warcon silently falls back to another sort for one it doesn't
+  know. If that board has a row, it reads the first row's dossier and fails unless
+  `dossier.perServer` is a list; an empty board is ok ("no rows to sample").
 
 ## 8. Configuration
 

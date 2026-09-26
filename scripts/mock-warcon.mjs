@@ -117,6 +117,8 @@ createServer((req, res) => {
   if (p.endsWith('/leaderboard')) {
     return json(res, {
       ok: true,
+      // Warcon echoes the query it ran; preflight checks the sort survived.
+      query: { sort: url.searchParams.get('sort') ?? 'kd' },
       rows: [
         { steamId: '76561190000000001', name: 'Alpha', minutes: 400, kills: 52, deaths: 10, matches: 9 },
         { steamId: '76561190000000002', name: 'Bravo', minutes: 300, kills: 20, deaths: 20, matches: 8 },
