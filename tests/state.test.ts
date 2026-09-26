@@ -99,3 +99,37 @@ describe('state', () => {
     expect(existsSync(`${path}.tmp`)).toBe(false);
   });
 });
+
+describe('rate-alert state', () => {
+  test('a fresh state has empty rate cooldowns and baselines', () => {
+    const s = emptyState();
+    expect(s.rateAlerted).toEqual({});
+    expect(s.baselines).toEqual({});
+  });
+
+  test('a state file written before rate alerts loads with both empty', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'modlog-state-'));
+    const path = join(dir, 'state.json');
+    await writeFile(
+      path,
+      JSON.stringify({ version: 1, servers: {}, kdAlerted: { '765': 1 }, startedAt: 1 }),
+      'utf8'
+    );
+    const s = await loadState(path);
+    expect(s.rateAlerted).toEqual({});
+    expect(s.baselines).toEqual({});
+    expect(s.kdAlerted).toEqual({ '765': 1 });
+  });
+
+  test('rate cooldowns and baselines survive a save and load', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'modlog-state-'));
+    const path = join(dir, 'state.json');
+    const s = emptyState();
+    s.rateAlerted['sweat:765'] = 42;
+    s.baselines['s1:765'] = { perHour: 12.5, minutes: 900, at: 7 };
+    await saveState(path, s);
+    const back = await loadState(path);
+    expect(back.rateAlerted).toEqual({ 'sweat:765': 42 });
+    expect(back.baselines).toEqual({ 's1:765': { perHour: 12.5, minutes: 900, at: 7 } });
+  });
+});

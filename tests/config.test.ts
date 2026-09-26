@@ -22,6 +22,13 @@ describe('loadConfig', () => {
     expect(c.kdRange).toBe('30d');
     expect(c.kdCooldownDays).toBe(7);
     expect(c.feedQuietMinutes).toBe(30);
+    expect(c.sweatPerHour).toBe(15);
+    expect(c.sweatRange).toBe('30d');
+    expect(c.surgeRange).toBe('7d');
+    expect(c.surgePerHour).toBe(10);
+    expect(c.surgeRatio).toBe(1.5);
+    expect(c.surgeHistoryMinutes).toBe(600);
+    expect(c.rateMinMinutes).toBe(180);
     expect(c.statePath).toBe('/data/state.json');
     expect(c.serverIds).toEqual([]);
     expect(c.serverLabels).toEqual({});
@@ -88,6 +95,18 @@ describe('loadConfig', () => {
     }
     expect(loadConfig({ ...base, PANEL_PUBLIC_URL: 'http://10.0.0.5:3000' }).panelPublicUrl).toBe(
       'http://10.0.0.5:3000'
+    );
+  });
+
+  test('rate ranges accept the leaderboard ranges', () => {
+    const c = loadConfig({ ...base, SWEAT_RANGE: '90d', SURGE_RANGE: 'all' });
+    expect(c.sweatRange).toBe('90d');
+    expect(c.surgeRange).toBe('all');
+  });
+
+  test('a rate range the leaderboard does not accept fails at startup, naming the variable', () => {
+    expect(() => loadConfig({ ...base, SURGE_RANGE: '14d' })).toThrow(
+      /SURGE_RANGE must be one of 7d, 30d, 90d, all/
     );
   });
 });

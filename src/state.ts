@@ -4,6 +4,17 @@ import { basename, dirname, join } from 'node:path';
 /** Per-server ring of recently seen kill event ids (spec §7). */
 export const SEEN_KILL_CAP = 500;
 
+/** A player's all-time kill rate on one server, as last read from their dossier. */
+export interface Baseline {
+  perHour: number;
+  minutes: number;
+  /** epoch ms of the lookup */
+  at: number;
+}
+
+/** How long a looked-up usual rate is trusted before it is read again (tiered-alerts spec §4). */
+export const BASELINE_TTL_MS = 86_400_000;
+
 export interface ServerState {
   /** newest first, capped at SEEN_KILL_CAP */
   seenKillIds: string[];
@@ -42,6 +53,10 @@ export interface State {
   servers: Record<string, ServerState>;
   /** steamId -> epoch ms of the last K/D alert */
   kdAlerted: Record<string, number>;
+  /** `sweat:{steamId}` / `surge:{steamId}` -> epoch ms of the last alert of that kind */
+  rateAlerted: Record<string, number>;
+  /** `{serverId}:{steamId}` -> that player's usual rate on that server */
+  baselines: Record<string, Baseline>;
   startedAt: number;
 }
 
@@ -61,7 +76,14 @@ export function emptyServerState(): ServerState {
 }
 
 export function emptyState(): State {
-  return { version: 1, servers: {}, kdAlerted: {}, startedAt: Date.now() };
+  return {
+    version: 1,
+    servers: {},
+    kdAlerted: {},
+    rateAlerted: {},
+    baselines: {},
+    startedAt: Date.now()
+  };
 }
 
 /** The entry for a server, created zeroed on first use. */
@@ -112,6 +134,8 @@ export async function loadState(path: string): Promise<State> {
         ])
       ),
       kdAlerted: parsed.kdAlerted ?? {},
+      rateAlerted: parsed.rateAlerted ?? {},
+      baselines: parsed.baselines ?? {},
       startedAt: parsed.startedAt ?? Date.now()
     };
   } catch {

@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import { PING_KINDS, type PingKind } from './escalate.js';
 
+/** The `range` values Warcon's leaderboard accepts. */
+export const BOARD_RANGES = ['7d', '30d', '90d', 'all'] as const;
+
 export interface Config {
   warconBaseUrl: string;
   panelPublicUrl: string;
@@ -24,6 +27,13 @@ export interface Config {
   kdRange: string;
   kdCooldownDays: number;
   feedQuietMinutes: number;
+  sweatPerHour: number;
+  sweatRange: string;
+  surgeRange: string;
+  surgePerHour: number;
+  surgeRatio: number;
+  surgeHistoryMinutes: number;
+  rateMinMinutes: number;
 }
 
 function parseServerLabels(raw: string): Record<string, string> {
@@ -91,6 +101,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     return parsed;
   };
+  const range = (key: string, fallback: string): string => {
+    const value = (env[key] ?? '').trim() || fallback;
+    if (!(BOARD_RANGES as readonly string[]).includes(value)) {
+      throw new Error(`${key} must be one of ${BOARD_RANGES.join(', ')}, got: ${value}`);
+    }
+    return value;
+  };
 
   const warconBaseUrl = req('WARCON_BASE_URL').replace(/\/+$/, '');
   const panelPublicUrl = req('PANEL_PUBLIC_URL').replace(/\/+$/, '');
@@ -139,6 +156,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     kdMinMinutes: num('KD_MIN_MINUTES', 60),
     kdRange: (env.KD_RANGE ?? '').trim() || '30d',
     kdCooldownDays: num('KD_COOLDOWN_DAYS', 7),
-    feedQuietMinutes: num('FEED_QUIET_MINUTES', 30)
+    feedQuietMinutes: num('FEED_QUIET_MINUTES', 30),
+    sweatPerHour: num('SWEAT_PER_HOUR', 15),
+    sweatRange: range('SWEAT_RANGE', '30d'),
+    surgeRange: range('SURGE_RANGE', '7d'),
+    surgePerHour: num('SURGE_PER_HOUR', 10),
+    surgeRatio: num('SURGE_RATIO', 1.5),
+    surgeHistoryMinutes: num('SURGE_HISTORY_MINUTES', 600),
+    rateMinMinutes: num('RATE_MIN_MINUTES', 180)
   };
 }
