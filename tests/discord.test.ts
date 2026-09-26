@@ -215,6 +215,50 @@ describe('kill-rate embed', () => {
   });
 });
 
+describe('tiers', () => {
+  const at = '2026-09-24T12:00:00.000Z';
+  const msg = (event: import('../src/events.js').ModEvent) =>
+    buildMessage({ event, ping: false }, links, ROLE).embeds[0]!;
+
+  test('a watched join is tier 1, blue', () => {
+    const e = msg({ kind: 'watchedJoin', serverId: 's1', at, steamId: '9', name: 'W' });
+    expect(e.color).toBe(0x3498db);
+    expect(e.footer).toEqual({ text: 'Tier 1 · watchlist' });
+  });
+
+  test('a K/D flag is tier 2, orange', () => {
+    const e = msg({
+      kind: 'highKd', serverId: 's1', at, steamId: '9', name: 'K',
+      kd: 5, kills: 50, deaths: 10, matches: 9, minutes: 400
+    });
+    expect(e.color).toBe(0xe67e22);
+    expect(e.footer).toEqual({ text: 'Tier 2 · high K/D' });
+  });
+
+  test('kill-rate alerts are tier 3, red, and name their parts', () => {
+    const sweat = { perHour: 17, kills: 170, minutes: 600, range: '30d' };
+    const surge = { perHour: 21, minutes: 300, usualPerHour: 12, usualMinutes: 6000, ratio: 1.75, range: '7d' };
+    const base = { kind: 'killRate' as const, serverId: 's1', at, steamId: '9', name: 'R' };
+    expect(msg({ ...base, sweat, surge: null }).footer).toEqual({ text: 'Tier 3 · sweat' });
+    expect(msg({ ...base, sweat: null, surge }).footer).toEqual({ text: 'Tier 3 · surge' });
+    const both = msg({ ...base, sweat, surge });
+    expect(both.footer).toEqual({ text: 'Tier 3 · sweat + surge' });
+    expect(both.color).toBe(0xe74c3c);
+  });
+
+  test('untiered alerts have no footer, and a team kill is purple', () => {
+    const tkEmbed = msg({
+      kind: 'teamKill', serverId: 's1', at, eventId: 'e', eventTime: 1,
+      killer: { steamId: '1', name: 'A', faction: 'V' },
+      victim: { steamId: '2', name: 'B', faction: 'V' },
+      cause: null, distanceM: null, count: 1
+    });
+    expect(tkEmbed.color).toBe(0x9b59b6);
+    expect(tkEmbed.footer).toBeUndefined();
+    expect(msg({ kind: 'feedQuiet', serverId: 's1', at, lastFeedAt: null }).footer).toBeUndefined();
+  });
+});
+
 describe('permanentRejectionStatus', () => {
   const body = { body: undefined, files: undefined };
 
