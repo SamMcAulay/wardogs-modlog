@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { PING_KINDS } from '../src/escalate.js';
-import { runCycle, type CycleDeps } from '../src/runner.js';
+import { retryKey, runCycle, type CycleDeps } from '../src/runner.js';
 import { emptyState, loadState, saveState, serverState, type State } from '../src/state.js';
 import type { DiscordMessage } from '../src/discord.js';
 import type { ModEvent } from '../src/events.js';
@@ -37,7 +37,7 @@ function deps(over: Partial<CycleDeps> = {}): CycleDeps {
     now: NOW,
     runKd: false,
     logger: silent,
-    escalateConfig: { teamKillPingAt: 3, kdCooldownDays: 7, pingOn: new Set(PING_KINDS) },
+    escalateConfig: { kdCooldownDays: 7, pingOn: new Set(PING_KINDS) },
     links: { panelPublicUrl: 'https://panel.example.com', serverLabels: {} },
     modRoleId: '999',
     sources: {
@@ -682,5 +682,19 @@ describe('runCycle', () => {
     await runCycle(deps({ state, logger }));
     await runCycle(deps({ state, logger }));
     expect(info.mock.calls.filter(([m]) => /warm/.test(String(m)))).toHaveLength(1);
+  });
+
+  test('retryKey drops the cycle time from a kill-rate event', () => {
+    expect(
+      retryKey({
+        kind: 'killRate',
+        serverId: 's1',
+        at: '2026-09-24T12:00:00.000Z',
+        steamId: '765',
+        name: 'Alpha',
+        sweat: null,
+        surge: null
+      })
+    ).toBe('killRate:s1:765');
   });
 });

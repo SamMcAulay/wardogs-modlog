@@ -50,6 +50,8 @@ export function retryKey(e: ModEvent): string {
       return `highKd:${e.serverId}:${e.steamId}`;
     case 'feedQuiet':
       return `feedQuiet:${e.serverId}`;
+    case 'killRate':
+      return `killRate:${e.serverId}:${e.steamId}`;
   }
 }
 

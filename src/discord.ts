@@ -39,7 +39,8 @@ const COLOR = {
   adminAction: 0x6c757d,
   watchedJoin: 0xf0ad4e,
   highKd: 0x5bc0de,
-  feedQuiet: 0x8a6d3b
+  feedQuiet: 0x8a6d3b,
+  killRate: 0xe74c3c
 } as const;
 
 const clamp = (s: string, max: number): string =>
@@ -53,6 +54,9 @@ const field = (name: string, value: string, inline = true): EmbedField => ({
 
 /** `Id.Item.AK74M` -> `AK74M`; Warcon labels these properly, we only shorten. */
 const weapon = (cause: string | null): string => (cause ? (cause.split('.').pop() ?? cause) : '—');
+
+/** 600 -> `10.0 h` */
+const hours = (minutes: number): string => `${(minutes / 60).toFixed(1)} h`;
 
 function embedFor(e: ModEvent, links: LinkConfig): Embed {
   const base = `${links.panelPublicUrl}/server/${encodeURIComponent(e.serverId)}`;
@@ -119,6 +123,31 @@ function embedFor(e: ModEvent, links: LinkConfig): Embed {
           'No kill batch has arrived recently. Check the feed Url on the Config tab — a config written before the /api/ingest/events suffix was known needs Configure again.',
         fields: [field('Last batch', e.lastFeedAt ?? 'never')]
       };
+
+    case 'killRate': {
+      const what = e.sweat && e.surge ? 'Sweat + surge' : e.sweat ? 'Sweat' : 'Surge';
+      const fields: EmbedField[] = [];
+      if (e.sweat) {
+        fields.push(field(`Kills/hour (${e.sweat.range})`, e.sweat.perHour.toFixed(1)));
+        fields.push(field(`Playtime (${e.sweat.range})`, hours(e.sweat.minutes)));
+      }
+      if (e.surge) {
+        fields.push(field(`Kills/hour (${e.surge.range})`, e.surge.perHour.toFixed(1)));
+        fields.push(
+          field('Usual kills/hour', `${e.surge.usualPerHour.toFixed(1)} over ${hours(e.surge.usualMinutes)}`)
+        );
+        fields.push(
+          field('Vs usual', Number.isFinite(e.surge.ratio) ? `${e.surge.ratio.toFixed(1)}×` : 'new')
+        );
+      }
+      return {
+        title: `${what} — ${e.name}`,
+        url: `${base}/players/${encodeURIComponent(e.steamId)}`,
+        color: COLOR.killRate,
+        timestamp: e.at,
+        fields
+      };
+    }
   }
 }
 

@@ -176,6 +176,45 @@ describe('buildMessage', () => {
   });
 });
 
+describe('kill-rate embed', () => {
+  const base = {
+    kind: 'killRate' as const,
+    serverId: 's1',
+    at: '2026-09-24T12:00:00.000Z',
+    steamId: '765',
+    name: 'Alpha'
+  };
+  const sweat = { perHour: 17.04, kills: 170, minutes: 600, range: '30d' };
+  const surge = { perHour: 21, minutes: 300, usualPerHour: 12, usualMinutes: 6000, ratio: 1.75, range: '7d' };
+
+  test('a sweat alone is titled Sweat and shows its rate and playtime', () => {
+    const m = buildMessage({ event: { ...base, sweat, surge: null }, ping: true }, links, ROLE);
+    const e = m.embeds[0]!;
+    expect(e.title).toBe('NA#3 · Sweat — Alpha');
+    expect(e.fields).toContainEqual({ name: 'Kills/hour (30d)', value: '17.0', inline: true });
+    expect(e.fields).toContainEqual({ name: 'Playtime (30d)', value: '10.0 h', inline: true });
+    expect(e.url).toBe('https://panel.example.com/server/s1/players/765');
+  });
+
+  test('both parts are titled Sweat + surge and show the ratio', () => {
+    const m = buildMessage({ event: { ...base, sweat, surge }, ping: true }, links, ROLE);
+    const e = m.embeds[0]!;
+    expect(e.title).toBe('NA#3 · Sweat + surge — Alpha');
+    expect(e.fields).toContainEqual({ name: 'Vs usual', value: '1.8×', inline: true });
+    expect(e.fields).toContainEqual({ name: 'Usual kills/hour', value: '12.0 over 100.0 h', inline: true });
+  });
+
+  test('an infinite ratio reads as new', () => {
+    const m = buildMessage(
+      { event: { ...base, sweat: null, surge: { ...surge, usualPerHour: 0, ratio: Infinity } }, ping: true },
+      links,
+      ROLE
+    );
+    expect(m.embeds[0]!.title).toBe('NA#3 · Surge — Alpha');
+    expect(m.embeds[0]!.fields).toContainEqual({ name: 'Vs usual', value: 'new', inline: true });
+  });
+});
+
 describe('permanentRejectionStatus', () => {
   const body = { body: undefined, files: undefined };
 

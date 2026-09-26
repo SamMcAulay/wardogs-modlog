@@ -51,7 +51,6 @@ async function main(): Promise<void> {
       runKd,
       logger: log,
       escalateConfig: {
-        teamKillPingAt: config.teamKillPingAt,
         kdCooldownDays: config.kdCooldownDays,
         pingOn: config.pingOn
       },

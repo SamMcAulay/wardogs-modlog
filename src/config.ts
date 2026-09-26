@@ -20,7 +20,6 @@ export interface Config {
   kdPollIntervalMs: number;
   requestTimeoutMs: number;
   statePath: string;
-  teamKillPingAt: number;
   kdThreshold: number;
   kdMinMatches: number;
   kdMinMinutes: number;
@@ -52,7 +51,10 @@ function parseServerLabels(raw: string): Record<string, string> {
   return labels;
 }
 
-/** Unset or blank keeps every ping; `none` turns them all off; otherwise a comma list of kinds. */
+/** Kinds that pinged before tiering; named in the error so an old .env explains itself. */
+const RETIRED_PING_KINDS = ['teamKill', 'watchedJoin', 'highKd'];
+
+/** Unset or blank: every tier-3 kind pings. `none`: nothing does. Otherwise a comma list. */
 function parsePingOn(raw: string): ReadonlySet<PingKind> {
   const value = raw.trim();
   if (value === '') return new Set(PING_KINDS);
@@ -61,6 +63,11 @@ function parsePingOn(raw: string): ReadonlySet<PingKind> {
   for (const rawEntry of value.split(',')) {
     const entry = rawEntry.trim();
     if (!entry) continue;
+    if (RETIRED_PING_KINDS.includes(entry)) {
+      throw new Error(
+        `PING_ON entry "${entry}" no longer pings: only tier-3 alerts (sweat, surge) mention the mod role — use sweat, surge or none`
+      );
+    }
     if (!(PING_KINDS as readonly string[]).includes(entry)) {
       throw new Error(
         `PING_ON entry "${entry}" is not one of ${PING_KINDS.join(', ')} (or use PING_ON=none)`
@@ -150,7 +157,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     kdPollIntervalMs: num('KD_POLL_INTERVAL_MS', 3_600_000),
     requestTimeoutMs: num('REQUEST_TIMEOUT_MS', 10_000),
     statePath: (env.STATE_PATH ?? '').trim() || '/data/state.json',
-    teamKillPingAt: num('TEAM_KILL_PING_AT', 3),
     kdThreshold: num('KD_THRESHOLD', 4.0),
     kdMinMatches: num('KD_MIN_MATCHES', 5),
     kdMinMinutes: num('KD_MIN_MINUTES', 60),

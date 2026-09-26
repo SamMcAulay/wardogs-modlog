@@ -15,7 +15,6 @@ describe('loadConfig', () => {
     const c = loadConfig({ ...base });
     expect(c.pollIntervalMs).toBe(30000);
     expect(c.kdPollIntervalMs).toBe(3600000);
-    expect(c.teamKillPingAt).toBe(3);
     expect(c.kdThreshold).toBe(4.0);
     expect(c.kdMinMatches).toBe(5);
     expect(c.kdMinMinutes).toBe(60);
@@ -32,20 +31,25 @@ describe('loadConfig', () => {
     expect(c.statePath).toBe('/data/state.json');
     expect(c.serverIds).toEqual([]);
     expect(c.serverLabels).toEqual({});
-    expect([...c.pingOn].sort()).toEqual(['highKd', 'teamKill', 'watchedJoin']);
+    expect([...c.pingOn].sort()).toEqual(['surge', 'sweat']);
   });
 
   test('PING_ON=none turns every ping off', () => {
     expect(loadConfig({ ...base, PING_ON: 'none' }).pingOn.size).toBe(0);
   });
 
-  test('PING_ON lists the kinds that ping, trimmed', () => {
-    const c = loadConfig({ ...base, PING_ON: ' watchedJoin , highKd ' });
-    expect([...c.pingOn].sort()).toEqual(['highKd', 'watchedJoin']);
+  test('PING_ON lists the tier-3 kinds that ping, trimmed', () => {
+    expect([...loadConfig({ ...base, PING_ON: ' surge ' }).pingOn]).toEqual(['surge']);
+  });
+
+  test('PING_ON rejects a kind that no longer pings, saying why', () => {
+    expect(() => loadConfig({ ...base, PING_ON: 'watchedJoin' })).toThrow(
+      /PING_ON entry "watchedJoin" no longer pings: only tier-3 alerts \(sweat, surge\)/
+    );
   });
 
   test('PING_ON names an unknown kind in its error', () => {
-    expect(() => loadConfig({ ...base, PING_ON: 'teamKill,kicks' })).toThrow(/PING_ON.*"kicks"/);
+    expect(() => loadConfig({ ...base, PING_ON: 'sweat,kicks' })).toThrow(/PING_ON.*"kicks"/);
   });
 
   test('strips trailing slashes from both origins', () => {
