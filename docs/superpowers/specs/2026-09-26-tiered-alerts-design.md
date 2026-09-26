@@ -187,18 +187,22 @@ PING_ON                    sweat,surge   (or none)
 ```
 
 - The ranges accept what the leaderboard accepts: `7d`, `30d`, `90d`, `all`. Anything else fails
-  at startup.
+  at startup. `KD_RANGE` is validated the same way.
 - **Removed:** `TEAM_KILL_PING_AT`. A leftover value in `.env` is ignored.
 
 ## 9. Testing
 
 - **Source (`sources/killrate.ts`)**, against leaderboard and dossier fixtures:
-  - The sweat threshold is inclusive.
-  - Paging stops on a short page, on a row below the threshold, and at four pages.
+  - The sweat threshold is inclusive, and a sweat's rate leaves seeding time out, matching the
+    panel.
+  - Paging stops on a short page, on a row below the threshold, and at four pages; it keeps
+    going past a last row that is above the threshold only once seeding is left out.
+  - A surge compares the seed-inclusive recent rate with the usual rate, and the floor uses
+    it too.
   - A surge needs the ratio, the floor and the history.
   - A cached baseline skips the dossier call.
   - A stale (24h+) cached baseline is refreshed.
-  - The ten-lookup cap is respected, highest rate first.
+  - The ten-lookup cap is respected, this run's sweats first, then highest rate first.
   - A zero usual rate reads as `new`.
   - A missing `perServer` entry is no surge.
   - Sweat and surge for one player merge into one event.
@@ -208,11 +212,13 @@ PING_ON                    sweat,surge   (or none)
   - Watched joins, K/D and team kills never ping.
   - The cooldown is per part, and both parts cooling means no post.
 - **Discord:** tier colours and footers for every tiered kind; the merged title; `new` in place
-  of an infinite ratio; field limits.
+  of an infinite ratio; distinct field names when both ranges match; field limits.
 - **Runner:** a failed post rolls back `rateAlerted` and `baselines` and re-stamps delivered
-  kill-rate alerts; pruning.
-- **Config:** new defaults; range validation; `PING_ON` accepts `sweat`/`surge`/`none` and
-  rejects the old kinds with the tier-3 message.
+  kill-rate alerts; state is saved after each server; pruning.
+- **Preflight:** the perHour board must echo `sort=perHour`; the sampled dossier must carry
+  `perServer`; an empty board is ok.
+- **Config:** new defaults; range validation (including `KD_RANGE`); `PING_ON` accepts
+  `sweat`/`surge`/`none` and rejects the old kinds with the tier-3 message.
 
 ## 10. Out of scope
 

@@ -97,7 +97,7 @@ async function main(): Promise<void> {
   };
 
   // Self-scheduling rather than setInterval: the next cycle is only queued once this
-  // one has fully settled, so a slow cycle (6 servers x 4 sources, each up to
+  // one has fully settled, so a slow cycle (6 servers x 5 sources, each up to
   // REQUEST_TIMEOUT_MS) can never overlap a still-running one and mutate the shared
   // state object concurrently. Every cycle — including the first — is error-contained
   // identically: log and keep going, never let a transient failure exit the process.

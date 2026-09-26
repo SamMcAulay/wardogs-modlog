@@ -135,14 +135,14 @@ this, since server labels are things like `EU#1` and `NA#3`.
 | `SERVER_IDS` | Comma-separated Warcon server ids to watch; required — the bot refuses to start empty |
 | `SERVER_LABELS` | Comma-separated `serverId=Label` pairs; every alert is prefixed with its label (or the id's first 8 characters if unlisted) |
 | `POLL_INTERVAL_MS` | How often each server is polled for kills, audit and watchlist (default `30000`) |
-| `KD_POLL_INTERVAL_MS` | How often the K/D leaderboard is polled (default `3600000`) |
+| `KD_POLL_INTERVAL_MS` | How often the K/D leaderboard is polled, and sweats and surges with it (default `3600000`) |
 | `REQUEST_TIMEOUT_MS` | Per-request timeout to Warcon (default `10000`) |
 | `STATE_PATH` | Where cursor/state JSON is written (default `/data/state.json`) |
 | `PING_ON` | Tier-3 alerts that mention the mod role: `sweat`, `surge`, or `none` (default: both) |
 | `KD_THRESHOLD` | K/D at or above which a player is flagged (default `4.0`) |
 | `KD_MIN_MATCHES` | Minimum matches before a K/D flag counts (default `5`) |
 | `KD_MIN_MINUTES` | Minimum playtime floor passed to the leaderboard query (default `60`) |
-| `KD_RANGE` | Leaderboard lookback window (default `30d`) |
+| `KD_RANGE` | Leaderboard lookback window: `7d`, `30d`, `90d` or `all` (default `30d`) |
 | `SWEAT_PER_HOUR` | Kills an hour that marks a sweat (default `15`) |
 | `SWEAT_RANGE` | Period a sweat's rate is measured over: `7d`, `30d`, `90d` or `all` (default `30d`) |
 | `SURGE_RANGE` | Recent period compared with a player's usual rate (default `7d`) |
@@ -161,6 +161,9 @@ runs with `PING_ON=none`, so that batch cannot ping. After deploying:
 1. Let the first hourly run finish posting — watch the logs — before restarting the bot or
    changing `.env`.
 2. Then remove `PING_ON=none` to turn tier-3 pings on.
+
+`TEAM_KILL_PING_AT` can be deleted from `.env`: team kills no longer ping, and the value is
+ignored.
 
 ## Adding a server
 

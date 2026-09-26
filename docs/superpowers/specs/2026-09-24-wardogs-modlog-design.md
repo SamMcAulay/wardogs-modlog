@@ -28,10 +28,11 @@ Five event kinds, agreed 2026-09-24 (amended 2026-09-26 for tiers; see §8):
 
 | Event | Pings the mod role? |
 | --- | --- |
-| Team kill, at the 3rd by one player in a session | yes |
-| High K/D flag | yes |
-| Watched player joins a server | yes |
+| Team kill (with the killer's running count this session) | no (amended 2026-09-26) |
+| High K/D flag (tier 2) | no (amended 2026-09-26) |
+| Watched player joins a server (tier 1) | no (amended 2026-09-26) |
 | Kick, ban, unban by an admin | no — a record, not an alarm |
+| Sweat or surge (tier 3; one alert per player, added 2026-09-26) | yes, per `PING_ON` |
 
 ### 2.1 Out of scope: chat logging
 
