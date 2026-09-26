@@ -68,7 +68,8 @@ accepted.
 - Candidates come from the `SURGE_RANGE` leaderboard, sorted by `perHour`, paged as in §3 while
   rows are at or above `SURGE_PER_HOUR`. They are taken highest recent rate first.
 - **Request budget.** Warcon allows 120 requests a minute per client, and the bot's regular
-  polling already uses about 36. So the bot:
+  polling already uses roughly 36–48 (three or four reads per server every 30 seconds). So
+  the bot:
   - **caches** each usual rate for 24 hours in state (`baselines`, keyed `serverId:steamId`,
     holding `perHour`, `minutes` and `at`); and
   - makes **at most 10 dossier lookups per server per hourly run**. Candidates past the cap are
