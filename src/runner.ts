@@ -64,8 +64,11 @@ export function retryKey(e: ModEvent): string {
  * (read in the same batch) then fails to post, rolling back naively would re-post A
  * next cycle too. `postedBeforeFailure` remembers A's retry identity across the
  * rollback so the retry cycle skips it — scoped to one retry: a server that completes
- * a cycle without a failure clears the list, so a genuine later recurrence (e.g. the
- * same player rejoining) still alerts.
+ * a cycle with no post failure and every source succeeding clears the list, so a
+ * genuine later recurrence (e.g. the same player rejoining) still alerts.
+ *
+ * A post Discord rejects outright (4xx other than 429) is not a failure in this sense:
+ * it is logged, counted as delivered, and the cycle carries on (spec §9).
  */
 export async function runCycle(deps: CycleDeps): Promise<void> {
   for (const serverId of deps.serverIds) {

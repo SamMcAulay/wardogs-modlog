@@ -24,7 +24,8 @@ export interface ServerState {
   /**
    * Retry identities (runner.ts's `retryKey`) of decisions that posted successfully
    * earlier in a cycle that later failed. Scoped to a single retry: the runner clears
-   * it once a cycle for this server completes without a failure.
+   * it once a cycle for this server completes with no post failure and every source
+   * succeeding.
    */
   postedBeforeFailure: string[];
   /**
