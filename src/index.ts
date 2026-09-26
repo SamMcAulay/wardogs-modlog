@@ -84,26 +84,45 @@ async function main(): Promise<void> {
   // identically: log and keep going, never let a transient failure exit the process.
   let timer: NodeJS.Timeout | undefined;
   let stopping = false;
+  // The cycle currently running, if any — shutdown waits on it (see below).
+  let inFlight: Promise<void> | undefined;
 
   const loop = async (): Promise<void> => {
-    try {
-      await cycle();
-    } catch (err) {
+    inFlight = cycle().catch((err: unknown) => {
       log.error(err instanceof Error ? err.message : String(err));
-    }
+    });
+    await inFlight;
+    inFlight = undefined;
     if (!stopping) timer = setTimeout(() => void loop(), config.pollIntervalMs);
   };
 
-  const shutdown = (signal: string): void => {
+  // Exiting mid-cycle would let posts go out without the state that records them being
+  // saved, so every deploy would re-post them. Let the in-flight cycle finish, capped
+  // well inside Docker's 10 s stop grace period so we still exit on our own terms.
+  const SHUTDOWN_DRAIN_MS = 8_000;
+  const shutdown = async (signal: string): Promise<void> => {
+    if (stopping) return; // a second signal while draining changes nothing
     log.info(`${signal} received, shutting down`);
     stopping = true;
     if (timer) clearTimeout(timer);
+    if (inFlight) {
+      log.info('waiting for the in-flight cycle to finish');
+      let cap: NodeJS.Timeout | undefined;
+      const timedOut = await Promise.race([
+        inFlight.then(() => false),
+        new Promise<boolean>((resolve) => {
+          cap = setTimeout(() => resolve(true), SHUTDOWN_DRAIN_MS);
+        })
+      ]);
+      clearTimeout(cap);
+      if (timedOut) log.warn(`in-flight cycle still running after ${SHUTDOWN_DRAIN_MS} ms, exiting anyway`);
+    }
     process.exit(0);
   };
   // Registered before the first cycle runs, so a signal during that first cycle is
   // still handled rather than falling through to the default (immediate exit).
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
 
   await loop();
 }
