@@ -22,10 +22,13 @@ export async function pollWatchlist(
   const players = summary.live?.players ?? [];
 
   const previous = new Set(s.presentSteamIds);
-  s.presentSteamIds = players.map((p) => p.steamId);
+  const current = players.map((p) => p.steamId);
 
   const arrivals = players.filter((p) => !previous.has(p.steamId));
-  if (arrivals.length === 0) return [];
+  if (arrivals.length === 0) {
+    s.presentSteamIds = current;
+    return [];
+  }
 
   const events: WatchedJoinEvent[] = [];
   for (let i = 0; i < arrivals.length; i += MARKS_BATCH) {
@@ -48,5 +51,9 @@ export async function pollWatchlist(
     }
   }
 
+  // Only now that every marks batch answered: recording the roster before the marks
+  // calls would let a failed call mark a watched arrival as present, and it would
+  // never alert.
+  s.presentSteamIds = current;
   return events;
 }

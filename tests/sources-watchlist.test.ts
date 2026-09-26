@@ -110,4 +110,40 @@ describe('pollWatchlist', () => {
     await pollWatchlist(counting, 's1', s, NOW);
     expect(calls).toBe(1);
   });
+
+  test('a failed marks call leaves the roster unchanged, so the next cycle still reports the join', async () => {
+    const s = emptyServerState();
+    const failing = {
+      getJson: async (path: string) => {
+        if (path.includes('/marks')) throw new Error('marks 503');
+        return summaryOf([{ steamId: '765', name: 'Alpha' }]);
+      }
+    } as unknown as import('../src/warcon.js').WarconClient;
+
+    await expect(pollWatchlist(failing, 's1', s, NOW)).rejects.toThrow('marks 503');
+    expect(s.presentSteamIds).toEqual([]); // the arrival is not recorded as present
+
+    const events = await pollWatchlist(
+      client(summaryOf([{ steamId: '765', name: 'Alpha' }]), marksOf(['765'])),
+      's1',
+      s,
+      NOW
+    );
+    expect(events.map((e) => (e as WatchedJoinEvent).steamId)).toEqual(['765']);
+    expect(s.presentSteamIds).toEqual(['765']);
+  });
+
+  test('a marks response for a player who left mid-cycle is ignored', async () => {
+    const s = emptyServerState();
+    // '999' was in the roster when marks was asked but is no longer on the server:
+    // marks answers for ids we did not ask about in this batch, which must not alert.
+    const events = await pollWatchlist(
+      client(summaryOf([{ steamId: '765', name: 'Alpha' }]), marksOf(['765', '999'])),
+      's1',
+      s,
+      NOW
+    );
+    expect(events.map((e) => (e as WatchedJoinEvent).steamId)).toEqual(['765']);
+    expect(s.presentSteamIds).toEqual(['765']);
+  });
 });
