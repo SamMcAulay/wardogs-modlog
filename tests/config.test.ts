@@ -113,4 +113,12 @@ describe('loadConfig', () => {
       /SURGE_RANGE must be one of 7d, 30d, 90d, all/
     );
   });
+
+  test('KD_RANGE is validated like the rate ranges', () => {
+    expect(loadConfig({ ...base, KD_RANGE: '90d' }).kdRange).toBe('90d');
+    expect(loadConfig(base).kdRange).toBe('30d');
+    expect(() => loadConfig({ ...base, KD_RANGE: '14d' })).toThrow(
+      /KD_RANGE must be one of 7d, 30d, 90d, all/
+    );
+  });
 });

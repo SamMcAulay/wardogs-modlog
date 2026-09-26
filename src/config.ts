@@ -160,7 +160,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     kdThreshold: num('KD_THRESHOLD', 4.0),
     kdMinMatches: num('KD_MIN_MATCHES', 5),
     kdMinMinutes: num('KD_MIN_MINUTES', 60),
-    kdRange: (env.KD_RANGE ?? '').trim() || '30d',
+    kdRange: range('KD_RANGE', '30d'),
     kdCooldownDays: num('KD_COOLDOWN_DAYS', 7),
     feedQuietMinutes: num('FEED_QUIET_MINUTES', 30),
     sweatPerHour: num('SWEAT_PER_HOUR', 15),
