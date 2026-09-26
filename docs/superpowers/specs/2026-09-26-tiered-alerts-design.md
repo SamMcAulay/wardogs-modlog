@@ -78,11 +78,14 @@ The embed labels the surge's figure `Recent kills/hour` so it is not confused wi
 
 - Candidates come from the `SURGE_RANGE` leaderboard, sorted by `perHour`, paged as in §3 while
   rows are at or above `SURGE_PER_HOUR` by the panel's seed-excluded rate (never below the
-  inclusive one, so paging cannot stop early); the seed-inclusive floor is applied after.
-  They are taken highest recent rate first.
-- **Request budget.** Warcon allows 120 requests a minute per client, and the bot's regular
-  polling already uses roughly 36–48 (three or four reads per server every 30 seconds). So
-  the bot:
+  inclusive one, so paging cannot stop early); the seed-inclusive floor is applied after. A
+  candidate who is already a sweat this run is looked up first, so their surge part joins the
+  same alert instead of pinging separately on a later run; the rest are taken highest recent
+  rate first.
+- **Panel load.** Warcon does not rate-limit authenticated key reads, but each dossier is
+  several database queries and may refresh the player's Steam data, and the bot's regular
+  polling already makes three or four reads per server every 30 seconds. To bound the load a
+  run puts on the panel, the bot:
   - **caches** each usual rate for 24 hours in state (`baselines`, keyed `serverId:steamId`,
     holding `perHour`, `minutes` and `at`); and
   - makes **at most 10 dossier lookups per server per hourly run**. Candidates past the cap are

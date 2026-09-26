@@ -195,6 +195,20 @@ describe('surges', () => {
     expect(later).toEqual(rows.slice(LOOKUPS_PER_RUN).map((r) => r.steamId));
   });
 
+  test("a sweat's surge lookup comes before other candidates, so both parts share one alert", async () => {
+    // Eleven candidates above the sweat's recent rate would otherwise use up the ten lookups.
+    const others = Array.from({ length: LOOKUPS_PER_RUN + 1 }, (_, i) => row(`p${i}`, 30 - i, 300));
+    const rows = [...others, row('sw', 16, 300)];
+    const dossiers = Object.fromEntries(rows.map((r) => [r.steamId, usual(10)]));
+    const { client, paths } = panel({ boards: { '30d': [row('sw', 20)], '7d': rows }, dossiers });
+    const events = (await pollKillRate(client, 's1', emptyState(), cfg, NOW)) as KillRateEvent[];
+    const looked = paths.filter((p) => p.includes('/players/')).map((p) => p.split('/').pop());
+    expect(looked).toEqual(['sw', ...others.slice(0, LOOKUPS_PER_RUN - 1).map((r) => r.steamId)]);
+    const sw = events.find((e) => e.steamId === 'sw')!;
+    expect(sw.sweat).not.toBeNull();
+    expect(sw.surge).not.toBeNull();
+  });
+
   test('a dossier failure fails the whole source', async () => {
     const { client } = panel({ boards: { '30d': [row('s', 20)], '7d': [row('a', 20, 300)] }, failDossier: true });
     await expect(pollKillRate(client, 's1', emptyState(), cfg, NOW)).rejects.toThrow('dossier down');

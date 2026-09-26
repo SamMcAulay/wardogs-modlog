@@ -17,7 +17,11 @@ export interface KillRateConfig {
 /** Rows per leaderboard page; Warcon serves fifty. */
 export const PAGE_SIZE = 50;
 export const MAX_PAGES = 4;
-/** Dossier reads per server per run — keeps the bot inside Warcon's 120/min (spec §4). */
+/**
+ * Dossier reads per server per run. This bounds the load a run puts on the panel — each
+ * dossier is several database queries and may refresh the player's Steam data — not a
+ * request rate: Warcon does not rate-limit authenticated key reads (spec §4).
+ */
 export const LOOKUPS_PER_RUN = 10;
 
 /** Kills per hour, computed here so thresholds never depend on the panel's rounding. */
@@ -76,8 +80,9 @@ async function hotRows(
  * (tiered-alerts spec §3–§5).
  *
  * Usual rates come from the player's dossier and are cached in `state.baselines` for a
- * day; a run reads at most LOOKUPS_PER_RUN uncached ones, highest recent rate first, so
- * a busy server's later candidates are reached on the following runs. Any failed read
+ * day; a run reads at most LOOKUPS_PER_RUN uncached ones, this run's sweats first and then
+ * highest recent rate first, so a busy server's later candidates are reached on the
+ * following runs. Any failed read
  * fails the whole source: the runner logs it and the next hourly run retries.
  */
 export async function pollKillRate(
@@ -110,6 +115,12 @@ export async function pollKillRate(
   for (const r of sweats) {
     eventFor(r).sweat = { perHour: panelRate(r), kills: r.kills, minutes: r.minutes, range: cfg.sweatRange };
   }
+
+  // A sweat's surge is looked up first, so it joins the same alert rather than being
+  // reached on a later run and pinging that person a second time. Sort is stable, so the
+  // rest keep highest recent rate first.
+  const sweatFirst = (r: BoardRow): number => (byPlayer.has(r.steamId) ? 0 : 1);
+  recent.sort((a, b) => sweatFirst(a) - sweatFirst(b));
 
   let lookups = 0;
   for (const r of recent) {
