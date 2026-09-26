@@ -44,4 +44,18 @@ describe('eventKey', () => {
     });
     expect(watched).not.toBe(eventKey(teamKill));
   });
+
+  test('a kill-rate event is keyed by server, player and time', () => {
+    expect(
+      eventKey({
+        kind: 'killRate',
+        serverId: 's1',
+        at: '2026-09-24T12:00:00.000Z',
+        steamId: '765',
+        name: 'Alpha',
+        sweat: { perHour: 17, kills: 170, minutes: 600, range: '30d' },
+        surge: null
+      })
+    ).toBe('killRate:s1:765:2026-09-24T12:00:00.000Z');
+  });
 });

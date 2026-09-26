@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig, type Config } from './config.js';
 import { serverLabel } from './discord.js';
 import { CloudflareBlockedError, WarconAuthError, WarconClient } from './warcon.js';
-import type { SummaryBody } from './warcon-types.js';
+import type { BoardBody, BoardRow, DossierBody, SummaryBody } from './warcon-types.js';
 
 export interface CheckResult {
   name: string;
@@ -111,6 +111,52 @@ export async function checkAll(
         results.push({ name, ok: true, detail: 'answered' });
       } catch (err) {
         results.push({ name, ok: false, detail: explain(path, err) });
+      }
+    }
+
+    // The kill-rate source (tiered-alerts spec §3–§4). Warcon silently falls back to
+    // another sort for one it doesn't know, which would make every sweat read wrong
+    // without an error, so the echoed query must say perHour.
+    const boardName = `perHour board (${id})`;
+    const boardPath =
+      `/api/servers/${id}/leaderboard?scope=server&range=${config.sweatRange}` +
+      `&sort=perHour&dir=desc&minMinutes=${config.rateMinMinutes}&page=1`;
+    let sample: BoardRow | undefined;
+    let boardAnswered = false;
+    try {
+      const board = await client.getJson<BoardBody>(boardPath);
+      boardAnswered = true;
+      sample = board.rows?.[0];
+      const sort = board.query?.sort;
+      results.push(
+        sort === 'perHour'
+          ? { name: boardName, ok: true, detail: 'answered, sorted by perHour' }
+          : {
+              name: boardName,
+              ok: false,
+              detail: `the panel sorted by ${sort ?? 'an unreported sort'}, not perHour — this Warcon is too old for sweats and surges`
+            }
+      );
+    } catch (err) {
+      results.push({ name: boardName, ok: false, detail: explain(boardPath, err) });
+    }
+
+    const dossierName = `dossier (${id})`;
+    if (!boardAnswered) {
+      results.push({ name: dossierName, ok: false, detail: 'skipped — perHour board did not answer' });
+    } else if (!sample) {
+      results.push({ name: dossierName, ok: true, detail: 'no rows to sample' });
+    } else {
+      const dossierPath = `/api/servers/${id}/players/${encodeURIComponent(sample.steamId)}`;
+      try {
+        const body = await client.getJson<DossierBody>(dossierPath);
+        results.push(
+          Array.isArray(body.dossier?.perServer)
+            ? { name: dossierName, ok: true, detail: 'answered' }
+            : { name: dossierName, ok: false, detail: 'answered without a perServer list — surges cannot read usual rates' }
+        );
+      } catch (err) {
+        results.push({ name: dossierName, ok: false, detail: explain(dossierPath, err) });
       }
     }
 

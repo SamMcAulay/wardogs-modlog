@@ -15,30 +15,41 @@ describe('loadConfig', () => {
     const c = loadConfig({ ...base });
     expect(c.pollIntervalMs).toBe(30000);
     expect(c.kdPollIntervalMs).toBe(3600000);
-    expect(c.teamKillPingAt).toBe(3);
     expect(c.kdThreshold).toBe(4.0);
     expect(c.kdMinMatches).toBe(5);
     expect(c.kdMinMinutes).toBe(60);
     expect(c.kdRange).toBe('30d');
     expect(c.kdCooldownDays).toBe(7);
     expect(c.feedQuietMinutes).toBe(30);
+    expect(c.sweatPerHour).toBe(15);
+    expect(c.sweatRange).toBe('30d');
+    expect(c.surgeRange).toBe('7d');
+    expect(c.surgePerHour).toBe(10);
+    expect(c.surgeRatio).toBe(1.5);
+    expect(c.surgeHistoryMinutes).toBe(600);
+    expect(c.rateMinMinutes).toBe(180);
     expect(c.statePath).toBe('/data/state.json');
     expect(c.serverIds).toEqual([]);
     expect(c.serverLabels).toEqual({});
-    expect([...c.pingOn].sort()).toEqual(['highKd', 'teamKill', 'watchedJoin']);
+    expect([...c.pingOn].sort()).toEqual(['surge', 'sweat']);
   });
 
   test('PING_ON=none turns every ping off', () => {
     expect(loadConfig({ ...base, PING_ON: 'none' }).pingOn.size).toBe(0);
   });
 
-  test('PING_ON lists the kinds that ping, trimmed', () => {
-    const c = loadConfig({ ...base, PING_ON: ' watchedJoin , highKd ' });
-    expect([...c.pingOn].sort()).toEqual(['highKd', 'watchedJoin']);
+  test('PING_ON lists the tier-3 kinds that ping, trimmed', () => {
+    expect([...loadConfig({ ...base, PING_ON: ' surge ' }).pingOn]).toEqual(['surge']);
+  });
+
+  test('PING_ON rejects a kind that no longer pings, saying why', () => {
+    expect(() => loadConfig({ ...base, PING_ON: 'watchedJoin' })).toThrow(
+      /PING_ON entry "watchedJoin" no longer pings: only tier-3 alerts \(sweat, surge\)/
+    );
   });
 
   test('PING_ON names an unknown kind in its error', () => {
-    expect(() => loadConfig({ ...base, PING_ON: 'teamKill,kicks' })).toThrow(/PING_ON.*"kicks"/);
+    expect(() => loadConfig({ ...base, PING_ON: 'sweat,kicks' })).toThrow(/PING_ON.*"kicks"/);
   });
 
   test('strips trailing slashes from both origins', () => {
@@ -88,6 +99,26 @@ describe('loadConfig', () => {
     }
     expect(loadConfig({ ...base, PANEL_PUBLIC_URL: 'http://10.0.0.5:3000' }).panelPublicUrl).toBe(
       'http://10.0.0.5:3000'
+    );
+  });
+
+  test('rate ranges accept the leaderboard ranges', () => {
+    const c = loadConfig({ ...base, SWEAT_RANGE: '90d', SURGE_RANGE: 'all' });
+    expect(c.sweatRange).toBe('90d');
+    expect(c.surgeRange).toBe('all');
+  });
+
+  test('a rate range the leaderboard does not accept fails at startup, naming the variable', () => {
+    expect(() => loadConfig({ ...base, SURGE_RANGE: '14d' })).toThrow(
+      /SURGE_RANGE must be one of 7d, 30d, 90d, all/
+    );
+  });
+
+  test('KD_RANGE is validated like the rate ranges', () => {
+    expect(loadConfig({ ...base, KD_RANGE: '90d' }).kdRange).toBe('90d');
+    expect(loadConfig(base).kdRange).toBe('30d');
+    expect(() => loadConfig({ ...base, KD_RANGE: '14d' })).toThrow(
+      /KD_RANGE must be one of 7d, 30d, 90d, all/
     );
   });
 });

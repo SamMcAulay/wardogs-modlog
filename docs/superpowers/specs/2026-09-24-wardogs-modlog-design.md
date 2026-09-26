@@ -24,14 +24,15 @@ owns detection and history, this bot owns noticing and shouting.
 
 ## 2. Scope
 
-Four event kinds, agreed 2026-09-24:
+Five event kinds, agreed 2026-09-24 (amended 2026-09-26 for tiers; see §8):
 
 | Event | Pings the mod role? |
 | --- | --- |
-| Team kill, at the 3rd by one player in a session | yes |
-| High K/D flag | yes |
-| Watched player joins a server | yes |
+| Team kill (with the killer's running count this session) | no (amended 2026-09-26) |
+| High K/D flag (tier 2) | no (amended 2026-09-26) |
+| Watched player joins a server (tier 1) | no (amended 2026-09-26) |
 | Kick, ban, unban by an admin | no — a record, not an alarm |
+| Sweat or surge (tier 3; one alert per player, added 2026-09-26) | yes, per `PING_ON` |
 
 ### 2.1 Out of scope: chat logging
 
@@ -292,10 +293,12 @@ reported as new.
 
 ## 8. Rules
 
-`PING_ON` (added 2026-09-26) lists which of the three pinging kinds actually mention the
-role; `none` silences all of them. A kind left out still posts its embed, and still counts:
-team-kill totals and K/D cooldowns advance exactly as if it pinged, so turning a ping back on
-does not replay or re-flag anything.
+Amended 2026-09-26 by `2026-09-26-tiered-alerts-design.md`: alerts are tiered, only tier 3 (sweat, surge) pings, and team kills no longer ping. Where the two disagree, the amendment wins.
+
+`PING_ON` (added 2026-09-26) lists which tier-3 alerts (sweat, surge) mention the role;
+`none` silences both, and both is the default. An alert left out still posts, and its
+sweat/surge cooldown still starts exactly as if it had pinged, so turning a ping back on
+does not re-flag anyone.
 
 ### 8.1 Team kills
 
@@ -309,9 +312,7 @@ Because kills are read newest-first and walked backwards, a page must be reverse
 chronological order before counting, or the third team kill would be attributed to the
 wrong event.
 
-Post every team kill without a mention. On the **3rd and every subsequent** team kill
-by the same player in the same match, mention the mod role. Threshold in config
-(`TEAM_KILL_PING_AT`, default 3).
+Post every team kill without a mention or ping (see §8 amendment note).
 
 Kills with `killer === null` are environment deaths and are never team kills;
 `isTeamKill` already excludes self-kills.
@@ -436,8 +437,7 @@ KD_POLL_INTERVAL_MS        3600000
 REQUEST_TIMEOUT_MS         10000
 STATE_PATH                 /data/state.json
 
-PING_ON                    teamKill,watchedJoin,highKd   (or none)
-TEAM_KILL_PING_AT          3
+PING_ON                    sweat,surge   (or none)
 KD_THRESHOLD               4.0
 KD_MIN_MATCHES             5
 KD_MIN_MINUTES             60

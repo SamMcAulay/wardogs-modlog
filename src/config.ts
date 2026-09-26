@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import { PING_KINDS, type PingKind } from './escalate.js';
 
+/** The `range` values Warcon's leaderboard accepts. */
+export const BOARD_RANGES = ['7d', '30d', '90d', 'all'] as const;
+
 export interface Config {
   warconBaseUrl: string;
   panelPublicUrl: string;
@@ -17,13 +20,19 @@ export interface Config {
   kdPollIntervalMs: number;
   requestTimeoutMs: number;
   statePath: string;
-  teamKillPingAt: number;
   kdThreshold: number;
   kdMinMatches: number;
   kdMinMinutes: number;
   kdRange: string;
   kdCooldownDays: number;
   feedQuietMinutes: number;
+  sweatPerHour: number;
+  sweatRange: string;
+  surgeRange: string;
+  surgePerHour: number;
+  surgeRatio: number;
+  surgeHistoryMinutes: number;
+  rateMinMinutes: number;
 }
 
 function parseServerLabels(raw: string): Record<string, string> {
@@ -42,7 +51,10 @@ function parseServerLabels(raw: string): Record<string, string> {
   return labels;
 }
 
-/** Unset or blank keeps every ping; `none` turns them all off; otherwise a comma list of kinds. */
+/** Kinds that pinged before tiering; named in the error so an old .env explains itself. */
+const RETIRED_PING_KINDS = ['teamKill', 'watchedJoin', 'highKd'];
+
+/** Unset or blank: every tier-3 kind pings. `none`: nothing does. Otherwise a comma list. */
 function parsePingOn(raw: string): ReadonlySet<PingKind> {
   const value = raw.trim();
   if (value === '') return new Set(PING_KINDS);
@@ -51,6 +63,11 @@ function parsePingOn(raw: string): ReadonlySet<PingKind> {
   for (const rawEntry of value.split(',')) {
     const entry = rawEntry.trim();
     if (!entry) continue;
+    if (RETIRED_PING_KINDS.includes(entry)) {
+      throw new Error(
+        `PING_ON entry "${entry}" no longer pings: only tier-3 alerts (sweat, surge) mention the mod role — use sweat, surge or none`
+      );
+    }
     if (!(PING_KINDS as readonly string[]).includes(entry)) {
       throw new Error(
         `PING_ON entry "${entry}" is not one of ${PING_KINDS.join(', ')} (or use PING_ON=none)`
@@ -90,6 +107,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       throw new Error(`${key} must be a positive number, got: ${raw}`);
     }
     return parsed;
+  };
+  const range = (key: string, fallback: string): string => {
+    const value = (env[key] ?? '').trim() || fallback;
+    if (!(BOARD_RANGES as readonly string[]).includes(value)) {
+      throw new Error(`${key} must be one of ${BOARD_RANGES.join(', ')}, got: ${value}`);
+    }
+    return value;
   };
 
   const warconBaseUrl = req('WARCON_BASE_URL').replace(/\/+$/, '');
@@ -133,12 +157,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     kdPollIntervalMs: num('KD_POLL_INTERVAL_MS', 3_600_000),
     requestTimeoutMs: num('REQUEST_TIMEOUT_MS', 10_000),
     statePath: (env.STATE_PATH ?? '').trim() || '/data/state.json',
-    teamKillPingAt: num('TEAM_KILL_PING_AT', 3),
     kdThreshold: num('KD_THRESHOLD', 4.0),
     kdMinMatches: num('KD_MIN_MATCHES', 5),
     kdMinMinutes: num('KD_MIN_MINUTES', 60),
-    kdRange: (env.KD_RANGE ?? '').trim() || '30d',
+    kdRange: range('KD_RANGE', '30d'),
     kdCooldownDays: num('KD_COOLDOWN_DAYS', 7),
-    feedQuietMinutes: num('FEED_QUIET_MINUTES', 30)
+    feedQuietMinutes: num('FEED_QUIET_MINUTES', 30),
+    sweatPerHour: num('SWEAT_PER_HOUR', 15),
+    sweatRange: range('SWEAT_RANGE', '30d'),
+    surgeRange: range('SURGE_RANGE', '7d'),
+    surgePerHour: num('SURGE_PER_HOUR', 10),
+    surgeRatio: num('SURGE_RATIO', 1.5),
+    surgeHistoryMinutes: num('SURGE_HISTORY_MINUTES', 600),
+    rateMinMinutes: num('RATE_MIN_MINUTES', 180)
   };
 }

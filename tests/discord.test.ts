@@ -176,6 +176,102 @@ describe('buildMessage', () => {
   });
 });
 
+describe('kill-rate embed', () => {
+  const base = {
+    kind: 'killRate' as const,
+    serverId: 's1',
+    at: '2026-09-24T12:00:00.000Z',
+    steamId: '765',
+    name: 'Alpha'
+  };
+  const sweat = { perHour: 17.04, kills: 170, minutes: 600, range: '30d' };
+  const surge = { perHour: 21, minutes: 300, usualPerHour: 12, usualMinutes: 6000, ratio: 1.75, range: '7d' };
+
+  test('a sweat alone is titled Sweat and shows its rate and playtime', () => {
+    const m = buildMessage({ event: { ...base, sweat, surge: null }, ping: true }, links, ROLE);
+    const e = m.embeds[0]!;
+    expect(e.title).toBe('NA#3 · Sweat — Alpha');
+    expect(e.fields).toContainEqual({ name: 'Kills/hour (30d)', value: '17.0', inline: true });
+    expect(e.fields).toContainEqual({ name: 'Playtime (30d)', value: '10.0 h', inline: true });
+    expect(e.url).toBe('https://panel.example.com/server/s1/players/765');
+  });
+
+  test('both parts are titled Sweat + surge and show the ratio', () => {
+    const m = buildMessage({ event: { ...base, sweat, surge }, ping: true }, links, ROLE);
+    const e = m.embeds[0]!;
+    expect(e.title).toBe('NA#3 · Sweat + surge — Alpha');
+    expect(e.fields).toContainEqual({ name: 'Vs usual', value: '1.8×', inline: true });
+    expect(e.fields).toContainEqual({ name: 'Usual kills/hour', value: '12.0 over 100.0 h', inline: true });
+    expect(e.fields).toContainEqual({ name: 'Recent kills/hour (7d)', value: '21.0', inline: true });
+  });
+
+  test('sweat and surge rate fields keep distinct names when both use the same range', () => {
+    const m = buildMessage(
+      { event: { ...base, sweat, surge: { ...surge, range: '30d' } }, ping: true },
+      links,
+      ROLE
+    );
+    const names = m.embeds[0]!.fields!.map((f) => f.name);
+    expect(names).toContain('Kills/hour (30d)');
+    expect(names).toContain('Recent kills/hour (30d)');
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  test('an infinite ratio reads as new', () => {
+    const m = buildMessage(
+      { event: { ...base, sweat: null, surge: { ...surge, usualPerHour: 0, ratio: Infinity } }, ping: true },
+      links,
+      ROLE
+    );
+    expect(m.embeds[0]!.title).toBe('NA#3 · Surge — Alpha');
+    expect(m.embeds[0]!.fields).toContainEqual({ name: 'Vs usual', value: 'new', inline: true });
+  });
+});
+
+describe('tiers', () => {
+  const at = '2026-09-24T12:00:00.000Z';
+  const msg = (event: import('../src/events.js').ModEvent) =>
+    buildMessage({ event, ping: false }, links, ROLE).embeds[0]!;
+
+  test('a watched join is tier 1, blue', () => {
+    const e = msg({ kind: 'watchedJoin', serverId: 's1', at, steamId: '9', name: 'W' });
+    expect(e.color).toBe(0x3498db);
+    expect(e.footer).toEqual({ text: 'Tier 1 · watchlist' });
+  });
+
+  test('a K/D flag is tier 2, orange', () => {
+    const e = msg({
+      kind: 'highKd', serverId: 's1', at, steamId: '9', name: 'K',
+      kd: 5, kills: 50, deaths: 10, matches: 9, minutes: 400
+    });
+    expect(e.color).toBe(0xe67e22);
+    expect(e.footer).toEqual({ text: 'Tier 2 · high K/D' });
+  });
+
+  test('kill-rate alerts are tier 3, red, and name their parts', () => {
+    const sweat = { perHour: 17, kills: 170, minutes: 600, range: '30d' };
+    const surge = { perHour: 21, minutes: 300, usualPerHour: 12, usualMinutes: 6000, ratio: 1.75, range: '7d' };
+    const base = { kind: 'killRate' as const, serverId: 's1', at, steamId: '9', name: 'R' };
+    expect(msg({ ...base, sweat, surge: null }).footer).toEqual({ text: 'Tier 3 · sweat' });
+    expect(msg({ ...base, sweat: null, surge }).footer).toEqual({ text: 'Tier 3 · surge' });
+    const both = msg({ ...base, sweat, surge });
+    expect(both.footer).toEqual({ text: 'Tier 3 · sweat + surge' });
+    expect(both.color).toBe(0xe74c3c);
+  });
+
+  test('untiered alerts have no footer, and a team kill is purple', () => {
+    const tkEmbed = msg({
+      kind: 'teamKill', serverId: 's1', at, eventId: 'e', eventTime: 1,
+      killer: { steamId: '1', name: 'A', faction: 'V' },
+      victim: { steamId: '2', name: 'B', faction: 'V' },
+      cause: null, distanceM: null, count: 1
+    });
+    expect(tkEmbed.color).toBe(0x9b59b6);
+    expect(tkEmbed.footer).toBeUndefined();
+    expect(msg({ kind: 'feedQuiet', serverId: 's1', at, lastFeedAt: null }).footer).toBeUndefined();
+  });
+});
+
 describe('permanentRejectionStatus', () => {
   const body = { body: undefined, files: undefined };
 
