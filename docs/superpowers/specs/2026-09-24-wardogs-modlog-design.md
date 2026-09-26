@@ -260,6 +260,7 @@ interface State {
     lastFeedAt: string | null;  // for the quiet-feed check
     lastEventTime: number;      // newest match-clock value seen, for match boundaries
     teamKills: Record<string, number>;  // steamId → count in the current match
+    warm: boolean;              // has completed one clean cycle; false = cold (below)
   }>;
   kdAlerted: Record<string, number>;  // steamId → epoch ms of last K/D alert
   startedAt: number;
@@ -280,6 +281,14 @@ each source, stores the cursors, writes state, and reports nothing on that first
 cycle. A bot that floods the staff channel with a month of backfill on first boot is
 one that gets muted within the hour. The same applies per server when a new server id
 first appears.
+
+Cold start is tracked **per server and persisted** as `warm`, which is false for a
+server id with no entry, and for an entry from a state file written before the field
+existed. A server that is not warm reads its sources and records their cursors but
+posts nothing. It turns warm after a cycle in which its kills, audit and watchlist
+sources all succeeded (the K/D board has no cursor and does not count). So a first
+boot during a Warcon outage stays cold across restarts, and its backlog is never
+reported as new.
 
 ## 8. Rules
 
@@ -376,8 +385,9 @@ Follows the status fleet's existing conventions (`src/warcon.ts`, `src/schedule.
 | --- | --- |
 | Cloudflare Access bounce | log as an error, distinct from an auth rejection |
 | Warcon 401 / 403 | log `warcon auth rejected`, naming the likely missing capability |
-| Fetch timeout / 5xx | per-server exponential backoff, ceiling 5 minutes |
+| Fetch timeout / 5xx | log it and move on; the failing server is retried on the next cycle |
 | Discord post fails | keep the event unacknowledged; do not advance the cursor |
+| Discord rejects the post (4xx other than 429) | log as an error with the status and message, count it as delivered, carry on. The same body would fail every retry and block the server forever |
 | State file missing | cold start (§7) |
 | State file corrupt | log loudly, treat as cold start, move the bad file aside |
 
@@ -394,6 +404,12 @@ cheaper failure than a missed ban.
 
 One source failing must not stop the others: each is wrapped independently, and a
 server that is unreachable does not block the rest of the fleet.
+
+There is no per-server backoff. Cycles run in a self-scheduling loop: the next cycle is
+queued only after the current one has settled, so cycles never overlap or pile up.
+Every Warcon request is bounded by `REQUEST_TIMEOUT_MS`, which caps how long one
+unreachable server can slow a cycle. A failing server is retried every cycle, and
+each failure is logged.
 
 ## 10. Configuration
 
