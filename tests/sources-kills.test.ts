@@ -25,6 +25,9 @@ const client = (body: KillsBody) =>
 const NOW = Date.parse('2026-09-24T12:00:00.000Z');
 const opts = { feedQuietMinutes: 30, now: NOW };
 
+/** A server that has completed a clean cycle, so it may report (spec §7). */
+const warmServerState = () => ({ ...emptyServerState(), warm: true });
+
 const body = (kills: KillView[], extra: Partial<KillsBody> = {}): KillsBody => ({
   ok: true,
   configured: true,
@@ -90,7 +93,7 @@ describe('pollKills', () => {
   });
 
   test('warns once when a configured feed has gone quiet', async () => {
-    const s = emptyServerState();
+    const s = warmServerState();
     s.presentSteamIds = ['765'];
     s.lastFeedAt = '2026-09-24T11:00:00.000Z'; // 60 minutes ago
     const stale = body([], { feedAt: '2026-09-24T11:00:00.000Z' });
@@ -134,7 +137,7 @@ describe('pollKills', () => {
   });
 
   test('a server that was recently empty does not warn yet', async () => {
-    const s = emptyServerState();
+    const s = warmServerState();
     s.lastFeedAt = '2026-09-24T10:00:00.000Z'; // 120 minutes ago
     s.lastEmptyAt = new Date(NOW - 5 * 60_000).toISOString(); // 5 minutes ago
     s.presentSteamIds = ['765']; // now has players
@@ -145,7 +148,7 @@ describe('pollKills', () => {
   });
 
   test('a server empty for longer than FEED_QUIET_MINUTES does warn', async () => {
-    const s = emptyServerState();
+    const s = warmServerState();
     s.lastFeedAt = '2026-09-24T10:00:00.000Z'; // 120 minutes ago
     s.lastEmptyAt = new Date(NOW - 31 * 60_000).toISOString(); // 31 minutes ago
     s.presentSteamIds = ['765']; // now has players
@@ -153,5 +156,21 @@ describe('pollKills', () => {
 
     const events = await pollKills(client(stale), 's1', s, opts);
     expect(events.filter((e) => e.kind === 'feedQuiet')).toHaveLength(1);
+  });
+
+  test('a server that is not yet warm neither warns nor marks the warning outstanding', async () => {
+    const s = emptyServerState(); // warm === false: its cycle posts nothing
+    s.presentSteamIds = ['765'];
+    s.lastFeedAt = '2026-09-24T11:00:00.000Z'; // 60 minutes ago
+    const stale = body([], { feedAt: '2026-09-24T11:00:00.000Z' });
+
+    const cold = await pollKills(client(stale), 's1', s, opts);
+    expect(cold.filter((e) => e.kind === 'feedQuiet')).toHaveLength(0);
+    expect(s.feedQuietWarned).toBe(false); // a warning nobody saw must not be "outstanding"
+
+    // Once warm, the same quiet feed is reported.
+    s.warm = true;
+    const warm = await pollKills(client(stale), 's1', s, opts);
+    expect(warm.filter((e) => e.kind === 'feedQuiet')).toHaveLength(1);
   });
 });

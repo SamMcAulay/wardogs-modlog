@@ -58,8 +58,10 @@ export async function pollKills(
   } else if (s.presentSteamIds.length === 0) {
     // Server is empty; record when that happened, never warn.
     s.lastEmptyAt = new Date(opts.now).toISOString();
-  } else if (body.configured && !s.feedQuietWarned) {
+  } else if (body.configured && !s.feedQuietWarned && s.warm) {
     // Players present, configured, not yet warned: measure quiet from the later of lastFeedAt and lastEmptyAt.
+    // A server that is not yet warm posts nothing this cycle (spec §7), so it must not
+    // mark a warning outstanding either — that would suppress the real one once warm.
     const lastFeed = s.lastFeedAt ? Date.parse(s.lastFeedAt) : null;
     const lastEmpty = s.lastEmptyAt ? Date.parse(s.lastEmptyAt) : null;
     const quietFrom = lastFeed === null && lastEmpty === null ? null : Math.max(lastFeed ?? 0, lastEmpty ?? 0);
