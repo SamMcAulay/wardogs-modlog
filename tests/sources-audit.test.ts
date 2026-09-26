@@ -84,4 +84,16 @@ describe('pollAudit', () => {
     const events = await pollAudit(client(body([bare])), 's1', s);
     expect((events[0] as AdminActionEvent).reason).toBe('');
   });
+
+  test('a page whose rows are all already known yields nothing and leaves the cursor alone', async () => {
+    const s = emptyServerState();
+    s.lastAuditId = 9;
+    const events = await pollAudit(
+      client(body([row(9, 'rcon.ban'), row(8, 'rcon.kick'), row(7, 'rcon.unban')])),
+      's1',
+      s
+    );
+    expect(events).toHaveLength(0);
+    expect(s.lastAuditId).toBe(9);
+  });
 });
