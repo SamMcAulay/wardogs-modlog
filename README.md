@@ -8,14 +8,16 @@ Design: `docs/superpowers/specs/2026-09-24-wardogs-modlog-design.md`
 
 ## What it does
 
-Four event kinds, polled from Warcon every `POLL_INTERVAL_MS` (K/D hourly):
+Four event kinds, polled from Warcon every `POLL_INTERVAL_MS` (K/D hourly), plus a
+feed-health warning:
 
 | Event | Pings the mod role? |
 | --- | --- |
-| Team kill, at the 3rd by one player in a session | yes |
+| Team kill, at the 3rd by one player in a match | yes |
 | High K/D flag | yes |
 | Watched player joins a server | yes |
 | Kick, ban, unban by an admin | no — a record, not an alarm |
+| Feed quiet: a configured kill feed has gone silent for `FEED_QUIET_MINUTES` with players on | no — a health warning, once until the feed resumes |
 
 Chat is out of scope: the game's feed carries no chat events at all, and Warcon's
 `/v1` surface has no chat-read route, so there is no source to read.
@@ -93,8 +95,8 @@ browser.
 
 `.github/workflows/deploy.yml` runs typecheck and tests on push to `master`, then
 SSHes in and runs `scripts/deploy.sh`, which resets the checkout to `origin/master`,
-rebuilds the image, runs `npm run preflight` against the *new* image, and only then
-replaces the running container with `docker compose up -d`. A bad token or an
+rebuilds the image, runs preflight (`node dist/preflight.js`) against the *new*
+image, and only then replaces the running container with `docker compose up -d`. A bad token or an
 unreachable panel aborts the deploy instead of taking the bot down.
 
 Repository secrets required: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (private half of a
@@ -144,6 +146,11 @@ the server either stays silent or preflight fails:
 
 Once all three are done, its events carry its label the same way every other
 server's do, for example an escalating team kill: `NA#3 · Team kill — Alpha (3)`.
+
+A newly added server starts cold, as the first boot does. On its first clean cycle it
+records its position and reports nothing from before, so its history never floods the
+channel. It reports normally from the cycle after that. If Warcon is unreachable for
+that server, it stays cold, across restarts, until one cycle succeeds.
 
 ## Known limitations
 
