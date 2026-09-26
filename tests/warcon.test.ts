@@ -66,6 +66,21 @@ describe('WarconClient', () => {
     await expect(client.getJson('/api/thing')).rejects.toBeInstanceOf(CloudflareBlockedError);
   });
 
+  test('an HTML error page reports its status and path, not Cloudflare', async () => {
+    const client = new WarconClient({
+      ...opts,
+      fetchImpl: async () =>
+        new Response('<html>Not found</html>', {
+          status: 404,
+          headers: { 'content-type': 'text/html' }
+        })
+    });
+    const err = await client.getJson('/api/servers/s1/kills').catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(CloudflareBlockedError);
+    expect(String(err)).toContain('404');
+    expect(String(err)).toContain('/api/servers/s1/kills');
+  });
+
   test('401 and 403 are WarconAuthError', async () => {
     for (const status of [401, 403]) {
       const client = new WarconClient({

@@ -71,14 +71,16 @@ export class WarconClient {
       );
     }
 
+    // Status before content type: a 404 or 500 comes back as an HTML error page, and
+    // calling that Cloudflare sends the reader after the wrong layer entirely.
+    if (!res.ok) throw new Error(`warcon request failed (${res.status}) on ${path}`);
+
     const contentType = res.headers.get('content-type') ?? '';
     if (!/application\/json/i.test(contentType)) {
       throw new CloudflareBlockedError(
         `blocked by Cloudflare Access (non-JSON response, content-type: ${contentType || 'none'})`
       );
     }
-
-    if (!res.ok) throw new Error(`warcon request failed (${res.status}) on ${path}`);
 
     return (await res.json()) as T;
   }
