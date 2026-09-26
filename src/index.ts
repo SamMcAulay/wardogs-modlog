@@ -1,5 +1,5 @@
 import { loadConfig } from './config.js';
-import { RestPoster } from './discord.js';
+import { RestPoster, serverLabel } from './discord.js';
 import { consoleLogger } from './log.js';
 import { runCycle } from './runner.js';
 import { pollAudit } from './sources/audit.js';
@@ -26,7 +26,13 @@ async function main(): Promise<void> {
   });
 
   const state = await loadState(config.statePath);
-  if (state.cold) log.info('no usable state file — recording position, reporting nothing');
+  const coldIds = config.serverIds.filter((id) => !state.servers[id]?.warm);
+  if (coldIds.length > 0) {
+    log.info(
+      `cold start for ${coldIds.map((id) => serverLabel(id, config.serverLabels)).join(', ')}` +
+        ' — recording position, reporting nothing until a clean cycle'
+    );
+  }
 
   const poster = new RestPoster(config.discordToken, config.discordChannelId);
   let lastKdAt = 0;

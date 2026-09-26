@@ -63,13 +63,12 @@ export function retryKey(e: ModEvent): string {
  * same player rejoining) still alerts.
  */
 export async function runCycle(deps: CycleDeps): Promise<void> {
-  const cold = deps.state.cold;
-  // A cold cycle in which a source failed must not report the backlog as new once
-  // things recover (spec §7) — stay cold until one fully clean cold cycle succeeds.
-  let coldSourceFailed = false;
-
   for (const serverId of deps.serverIds) {
     const s = serverState(deps.state, serverId);
+    // Cold start is per server and persisted (spec §7): a server that has never
+    // completed a clean cycle — first boot, or a server id newly added to SERVER_IDS —
+    // learns where it is and says nothing, so its history is not reported as new.
+    const warm = s.warm;
     // escalate() writes to BOTH the server entry and the global kdAlerted map, so a
     // failed post has to roll back both — otherwise a K/D alert nobody received still
     // starts its cooldown and the player goes unreported for days. Snapshotting
@@ -78,23 +77,37 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
     const kdSnapshot = { ...deps.state.kdAlerted };
 
     const collected: ModEvent[] = [];
-    const run = async (name: string, fn: () => Promise<ModEvent[]>): Promise<void> => {
+    // Only the sources that keep a cursor decide warmth: the K/D board has none, so
+    // it failing leaves nothing un-recorded.
+    let cursorSourceFailed = false;
+    const run = async (
+      name: string,
+      fn: () => Promise<ModEvent[]>,
+      hasCursor = true
+    ): Promise<void> => {
       try {
         collected.push(...(await fn()));
       } catch (err) {
         // One source failing must not stop the others, or one server the rest.
         deps.logger.warn(`[${serverId}] ${name}: ${err instanceof Error ? err.message : err}`);
-        if (cold) coldSourceFailed = true;
+        if (hasCursor) cursorSourceFailed = true;
       }
     };
 
     await run('kills', () => deps.sources.kills(serverId, s));
     await run('audit', () => deps.sources.audit(serverId, s));
     await run('watchlist', () => deps.sources.watchlist(serverId, s));
-    if (deps.runKd) await run('kd', () => deps.sources.kd(serverId));
+    if (deps.runKd) await run('kd', () => deps.sources.kd(serverId), false);
 
-    // A cold start learns where it is and says nothing (spec §7).
-    if (cold) continue;
+    if (!warm) {
+      // A cold cycle in which a cursored source failed must not report that source's
+      // backlog as new once it recovers — stay cold until one fully clean cycle.
+      if (!cursorSourceFailed) {
+        s.warm = true;
+        deps.logger.info(`[${serverId}] now warm: position recorded, reporting from the next cycle`);
+      }
+      continue;
+    }
 
     const decisions = escalate(collected, deps.state, deps.escalateConfig, deps.now);
 
@@ -135,6 +148,5 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
     }
   }
 
-  deps.state.cold = cold && coldSourceFailed;
   await deps.save(deps.state);
 }

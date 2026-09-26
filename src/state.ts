@@ -27,6 +27,13 @@ export interface ServerState {
    * it once a cycle for this server completes without a failure.
    */
   postedBeforeFailure: string[];
+  /**
+   * Whether this server has completed a cycle in which its cursored sources (kills,
+   * audit, watchlist) all succeeded. Until then the runner records position and posts
+   * nothing (spec §7). Persisted, and false by default, so a new server id and an
+   * entry from an older state file both come up cold.
+   */
+  warm: boolean;
 }
 
 export interface State {
@@ -35,8 +42,6 @@ export interface State {
   /** steamId -> epoch ms of the last K/D alert */
   kdAlerted: Record<string, number>;
   startedAt: number;
-  /** true when no usable state file was found: report nothing this cycle */
-  cold: boolean;
 }
 
 export function emptyServerState(): ServerState {
@@ -49,12 +54,13 @@ export function emptyServerState(): ServerState {
     teamKills: {},
     feedQuietWarned: false,
     lastEmptyAt: null,
-    postedBeforeFailure: []
+    postedBeforeFailure: [],
+    warm: false
   };
 }
 
 export function emptyState(): State {
-  return { version: 1, servers: {}, kdAlerted: {}, startedAt: Date.now(), cold: true };
+  return { version: 1, servers: {}, kdAlerted: {}, startedAt: Date.now() };
 }
 
 /** The entry for a server, created zeroed on first use. */
@@ -105,8 +111,7 @@ export async function loadState(path: string): Promise<State> {
         ])
       ),
       kdAlerted: parsed.kdAlerted ?? {},
-      startedAt: parsed.startedAt ?? Date.now(),
-      cold: false
+      startedAt: parsed.startedAt ?? Date.now()
     };
   } catch {
     // Keep the bad file for diagnosis rather than overwriting it.
@@ -118,6 +123,6 @@ export async function loadState(path: string): Promise<State> {
 /** Write to a temp file in the same directory, then rename — rename is atomic. */
 export async function saveState(path: string, state: State): Promise<void> {
   const tmp = join(dirname(path), `${basename(path)}.tmp`);
-  await writeFile(tmp, JSON.stringify({ ...state, cold: undefined }, null, 2), 'utf8');
+  await writeFile(tmp, JSON.stringify(state, null, 2), 'utf8');
   await rename(tmp, path);
 }

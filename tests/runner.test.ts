@@ -1,12 +1,22 @@
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { runCycle, type CycleDeps } from '../src/runner.js';
-import { emptyState, serverState, type State } from '../src/state.js';
+import { emptyState, loadState, saveState, serverState, type State } from '../src/state.js';
 import type { DiscordMessage } from '../src/discord.js';
 import type { ModEvent } from '../src/events.js';
 
 const NOW = Date.parse('2026-09-24T12:00:00.000Z');
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
+
+/** A state whose listed servers have already completed a clean cycle (spec §7). */
+function warmState(...serverIds: string[]): State {
+  const state = emptyState();
+  for (const id of serverIds.length ? serverIds : ['s1']) serverState(state, id).warm = true;
+  return state;
+}
 
 const adminEvent = (auditId: number): ModEvent => ({
   kind: 'adminAction',
@@ -44,8 +54,7 @@ function deps(over: Partial<CycleDeps> = {}): CycleDeps {
 describe('runCycle', () => {
   test('posts an event and saves state', async () => {
     const posted: DiscordMessage[] = [];
-    const state = emptyState();
-    state.cold = false; // this test exercises the normal (non-cold-start) path
+    const state = warmState(); // this test exercises the normal (non-cold-start) path
     const save = vi.fn(async () => {});
     await runCycle(
       deps({
@@ -66,7 +75,7 @@ describe('runCycle', () => {
 
   test('a cold start records position and posts nothing', async () => {
     const posted: DiscordMessage[] = [];
-    const state = emptyState(); // cold === true
+    const state = emptyState(); // no server has completed a clean cycle yet
     const save = vi.fn(async () => {});
     await runCycle(
       deps({
@@ -83,13 +92,12 @@ describe('runCycle', () => {
     );
     expect(posted).toHaveLength(0);
     expect(save).toHaveBeenCalledOnce();
-    expect(state.cold).toBe(false); // the next cycle reports normally
+    expect(serverState(state, 's1').warm).toBe(true); // the next cycle reports normally
   });
 
   test('one failing source does not stop the others', async () => {
     const posted: DiscordMessage[] = [];
-    const state = emptyState();
-    state.cold = false;
+    const state = warmState();
     await runCycle(
       deps({
         state,
@@ -108,8 +116,7 @@ describe('runCycle', () => {
   });
 
   test('a failed post leaves the audit cursor unadvanced', async () => {
-    const state = emptyState();
-    state.cold = false;
+    const state = warmState();
     // The source advanced the cursor in-place, as the real one does.
     const audit = async (_id: string, s: ReturnType<typeof serverState>) => {
       s.lastAuditId = 7;
@@ -135,8 +142,7 @@ describe('runCycle', () => {
   });
 
   test('a failed post also rolls back the K/D cooldown', async () => {
-    const state = emptyState();
-    state.cold = false;
+    const state = warmState();
     await runCycle(
       deps({
         state,
@@ -172,8 +178,7 @@ describe('runCycle', () => {
   });
 
   test('a successful post keeps the advanced cursor', async () => {
-    const state = emptyState();
-    state.cold = false;
+    const state = warmState();
     const audit = async (_id: string, s: ReturnType<typeof serverState>) => {
       s.lastAuditId = 7;
       return [adminEvent(7)];
@@ -203,8 +208,7 @@ describe('runCycle', () => {
 
   test('a retry skips an event that already posted before a failure, then clears once a cycle completes cleanly', async () => {
     const posted: DiscordMessage[] = [];
-    const state = emptyState();
-    state.cold = false;
+    const state = warmState();
 
     // A stand-in for the real audit source: returns whichever of rows 5/6 are still
     // ahead of the cursor, and advances the cursor past both when it does.
@@ -253,8 +257,7 @@ describe('runCycle', () => {
 
   test('a watched join skipped on the immediate retry still alerts on a later genuine rejoin', async () => {
     const posted: DiscordMessage[] = [];
-    const state = emptyState();
-    state.cold = false;
+    const state = warmState();
 
     const watchedJoinEvent: ModEvent = {
       kind: 'watchedJoin',
@@ -337,8 +340,7 @@ describe('runCycle', () => {
   });
 
   test('the K/D cooldown is set correctly once a retried cycle succeeds', async () => {
-    const state = emptyState();
-    state.cold = false;
+    const state = warmState();
     const highKdEvent: ModEvent = {
       kind: 'highKd',
       serverId: 's1',
@@ -392,8 +394,8 @@ describe('runCycle', () => {
     expect(state.kdAlerted['765']).toBe(NOW + 60_000);
   });
 
-  test('a cold cycle in which a source failed leaves cold true, so the backlog is not later reported as new', async () => {
-    const state = emptyState(); // cold === true
+  test('a cold cycle in which a source failed leaves the server cold, so the backlog is not later reported as new', async () => {
+    const state = emptyState();
     const save = vi.fn(async () => {});
     await runCycle(
       deps({
@@ -409,12 +411,12 @@ describe('runCycle', () => {
         save
       })
     );
-    expect(state.cold).toBe(true); // still cold — needs one fully clean cycle
+    expect(serverState(state, 's1').warm).toBe(false); // still cold — needs one fully clean cycle
     expect(save).toHaveBeenCalledOnce(); // whatever position we did learn is still saved
   });
 
-  test('a clean cold cycle clears cold', async () => {
-    const state = emptyState(); // cold === true
+  test('a clean cold cycle warms the server', async () => {
+    const state = emptyState();
     await runCycle(
       deps({
         state,
@@ -426,6 +428,123 @@ describe('runCycle', () => {
         }
       })
     );
-    expect(state.cold).toBe(false);
+    expect(serverState(state, 's1').warm).toBe(true);
+  });
+
+  test('a failing K/D board does not keep a server cold: it has no cursor', async () => {
+    const state = emptyState();
+    await runCycle(
+      deps({
+        state,
+        runKd: true,
+        sources: {
+          kills: async () => [],
+          audit: async () => [],
+          watchlist: async () => [],
+          kd: async () => {
+            throw new Error('leaderboard down');
+          }
+        }
+      })
+    );
+    expect(serverState(state, 's1').warm).toBe(true);
+  });
+
+  test('a new server id added to a warm state posts nothing on its first cycle', async () => {
+    const posted: DiscordMessage[] = [];
+    const state = warmState('s1');
+    const audit: CycleDeps['sources']['audit'] = async (id) => [{ ...adminEvent(1), serverId: id }];
+    await runCycle(
+      deps({
+        serverIds: ['s1', 's2'],
+        state,
+        sources: { kills: async () => [], audit, watchlist: async () => [], kd: async () => [] },
+        poster: { post: async (m) => void posted.push(m) }
+      })
+    );
+    expect(posted).toHaveLength(1); // s1's event only — s2's history is not flooded
+    expect(posted[0]!.embeds[0]!.title).toMatch(/^s1 /);
+    expect(serverState(state, 's2').warm).toBe(true); // s2 reports from the next cycle
+  });
+
+  test('a server whose audit source throws on its first cycle stays cold, across a restart', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'modlog-runner-'));
+    const path = join(dir, 'state.json');
+    const state = emptyState();
+    await runCycle(
+      deps({
+        state,
+        sources: {
+          kills: async () => [],
+          audit: async () => {
+            throw new Error('audit 503');
+          },
+          watchlist: async () => [],
+          kd: async () => []
+        },
+        save: (s) => saveState(path, s)
+      })
+    );
+    expect(serverState(state, 's1').warm).toBe(false);
+
+    // A restart: the bot must come back up cold for s1, not treat the file as warm.
+    const back = await loadState(path);
+    const posted: DiscordMessage[] = [];
+    await runCycle(
+      deps({
+        state: back,
+        sources: {
+          kills: async () => [],
+          audit: async () => [adminEvent(1)], // the backlog, now readable
+          watchlist: async () => [],
+          kd: async () => []
+        },
+        poster: { post: async (m) => void posted.push(m) }
+      })
+    );
+    expect(posted).toHaveLength(0); // still records position only
+    expect(serverState(back, 's1').warm).toBe(true);
+  });
+
+  test('once warm, events post', async () => {
+    const posted: DiscordMessage[] = [];
+    const state = emptyState();
+    const sources = {
+      kills: async () => [],
+      audit: async () => [adminEvent(1)],
+      watchlist: async () => [],
+      kd: async () => []
+    };
+    const poster = { post: async (m: DiscordMessage) => void posted.push(m) };
+    await runCycle(deps({ state, sources, poster })); // cold: records position
+    expect(posted).toHaveLength(0);
+    await runCycle(deps({ state, sources, poster })); // warm: reports
+    expect(posted).toHaveLength(1);
+  });
+
+  test("one server's failure does not keep another server cold", async () => {
+    const state = emptyState();
+    const audit: CycleDeps['sources']['audit'] = async (id) => {
+      if (id === 's1') throw new Error('audit 503');
+      return [];
+    };
+    await runCycle(
+      deps({
+        serverIds: ['s1', 's2'],
+        state,
+        sources: { kills: async () => [], audit, watchlist: async () => [], kd: async () => [] }
+      })
+    );
+    expect(serverState(state, 's1').warm).toBe(false);
+    expect(serverState(state, 's2').warm).toBe(true);
+  });
+
+  test('logs once when a server turns warm', async () => {
+    const info = vi.fn();
+    const state = emptyState();
+    const logger = { ...silent, info };
+    await runCycle(deps({ state, logger }));
+    await runCycle(deps({ state, logger }));
+    expect(info.mock.calls.filter(([m]) => /warm/.test(String(m)))).toHaveLength(1);
   });
 });

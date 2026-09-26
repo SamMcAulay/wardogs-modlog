@@ -22,27 +22,43 @@ describe('state', () => {
     const s = await loadState(join(dir, 'nope.json'));
     expect(s.version).toBe(1);
     expect(s.servers).toEqual({});
-    expect(s.cold).toBe(true);
+    // No server entries: every watched server is created cold on first use.
+    expect(serverState(s, 's1').warm).toBe(false);
   });
 
   test('round-trips through save and load', async () => {
     const path = join(dir, 'state.json');
     const s = emptyState();
     serverState(s, 's1').lastAuditId = 99;
+    serverState(s, 's1').warm = true;
+    serverState(s, 's2'); // seen, but never completed a clean cycle
     s.kdAlerted['765'] = 1234;
     await saveState(path, s);
 
     const back = await loadState(path);
     expect(back.servers.s1?.lastAuditId).toBe(99);
     expect(back.kdAlerted['765']).toBe(1234);
-    expect(back.cold).toBe(false);
+    // Warmth is per server and persisted: a restart keeps a cold server cold (spec §7).
+    expect(back.servers.s1?.warm).toBe(true);
+    expect(back.servers.s2?.warm).toBe(false);
+  });
+
+  test('a server entry from a file written before `warm` existed loads cold', async () => {
+    const path = join(dir, 'state.json');
+    await writeFile(
+      path,
+      JSON.stringify({ version: 1, servers: { s1: { lastAuditId: 4 } }, kdAlerted: {}, startedAt: 1 })
+    );
+    const back = await loadState(path);
+    expect(back.servers.s1?.lastAuditId).toBe(4);
+    expect(back.servers.s1?.warm).toBe(false);
   });
 
   test('a corrupt file is moved aside and cold-starts', async () => {
     const path = join(dir, 'state.json');
     await writeFile(path, '{not json');
     const s = await loadState(path);
-    expect(s.cold).toBe(true);
+    expect(s.servers).toEqual({}); // every server comes up cold
     expect(existsSync(`${path}.corrupt`)).toBe(true);
   });
 
@@ -52,6 +68,7 @@ describe('state', () => {
     a.lastAuditId = 5;
     expect(serverState(s, 's1').lastAuditId).toBe(5);
     expect(serverState(s, 's2').lastAuditId).toBe(0);
+    expect(serverState(s, 's2').warm).toBe(false); // a new server id starts cold
   });
 
   test('the kill-id ring keeps newest first and evicts the oldest', () => {
