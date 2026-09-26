@@ -8,7 +8,7 @@ Design: `docs/superpowers/specs/2026-09-24-wardogs-modlog-design.md`
 
 ## What it does
 
-Four event kinds, polled from Warcon every `POLL_INTERVAL_MS` (K/D hourly), plus a
+Five sources, polled from Warcon every `POLL_INTERVAL_MS` (K/D and kill-rate hourly), plus a
 feed-health warning:
 
 | Tier | Alert | Colour | Pings the mod role? |

@@ -24,7 +24,7 @@ owns detection and history, this bot owns noticing and shouting.
 
 ## 2. Scope
 
-Four event kinds, agreed 2026-09-24:
+Five event kinds, agreed 2026-09-24 (amended 2026-09-26 for tiers; see §8):
 
 | Event | Pings the mod role? |
 | --- | --- |
@@ -294,10 +294,10 @@ reported as new.
 
 Amended 2026-09-26 by `2026-09-26-tiered-alerts-design.md`: alerts are tiered, only tier 3 (sweat, surge) pings, and team kills no longer ping. Where the two disagree, the amendment wins.
 
-`PING_ON` (added 2026-09-26) lists which of the three pinging kinds actually mention the
-role; `none` silences all of them. A kind left out still posts its embed, and still counts:
-team-kill totals and K/D cooldowns advance exactly as if it pinged, so turning a ping back on
-does not replay or re-flag anything.
+`PING_ON` (added 2026-09-26) lists which tier-3 alerts (sweat, surge) mention the role;
+`none` silences both, and both is the default. An alert left out still posts, and its
+sweat/surge cooldown still starts exactly as if it had pinged, so turning a ping back on
+does not re-flag anyone.
 
 ### 8.1 Team kills
 
