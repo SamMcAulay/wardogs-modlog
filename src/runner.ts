@@ -7,13 +7,14 @@ import {
 import { escalate, type EscalateConfig } from './escalate.js';
 import { eventKey, type ModEvent } from './events.js';
 import type { Logger } from './log.js';
-import { serverState, type ServerState, type State } from './state.js';
+import { BASELINE_TTL_MS, serverState, type ServerState, type State } from './state.js';
 
 export interface CycleSources {
   kills(serverId: string, s: ServerState): Promise<ModEvent[]>;
   audit(serverId: string, s: ServerState): Promise<ModEvent[]>;
   watchlist(serverId: string, s: ServerState): Promise<ModEvent[]>;
   kd(serverId: string): Promise<ModEvent[]>;
+  killRate(serverId: string): Promise<ModEvent[]>;
 }
 
 export interface CycleDeps {
@@ -85,6 +86,8 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
     // kdAlerted per server (not once per cycle) preserves earlier servers' alerts.
     const snapshot = structuredClone(s);
     const kdSnapshot = { ...deps.state.kdAlerted };
+    const rateSnapshot = { ...deps.state.rateAlerted };
+    const baselineSnapshot = { ...deps.state.baselines };
 
     const collected: ModEvent[] = [];
     // Only the sources that keep a cursor decide warmth: the K/D board has none, so
@@ -110,6 +113,7 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
     await run('audit', () => deps.sources.audit(serverId, s));
     await run('watchlist', () => deps.sources.watchlist(serverId, s));
     if (deps.runKd) await run('kd', () => deps.sources.kd(serverId), false);
+    if (deps.runKd) await run('killRate', () => deps.sources.killRate(serverId), false);
 
     if (!warm) {
       // A cold cycle in which a cursored source failed must not report that source's
@@ -164,11 +168,16 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
     if (failed) {
       deps.state.servers[serverId] = { ...snapshot, postedBeforeFailure: Array.from(delivered) };
       deps.state.kdAlerted = kdSnapshot;
-      // The snapshot also erased the cooldowns of K/D alerts that DID go out this
-      // cycle; without them the next K/D run would ping those players again.
+      deps.state.rateAlerted = rateSnapshot;
+      deps.state.baselines = baselineSnapshot;
+      // The snapshot also erased the cooldowns of alerts that DID go out this cycle;
+      // without them the next run would ping those players again.
       for (const d of decisions) {
-        if (d.event.kind === 'highKd' && delivered.has(retryKey(d.event))) {
-          deps.state.kdAlerted[d.event.steamId] = deps.now;
+        if (!delivered.has(retryKey(d.event))) continue;
+        if (d.event.kind === 'highKd') deps.state.kdAlerted[d.event.steamId] = deps.now;
+        if (d.event.kind === 'killRate') {
+          if (d.event.sweat) deps.state.rateAlerted[`sweat:${d.event.steamId}`] = deps.now;
+          if (d.event.surge) deps.state.rateAlerted[`surge:${d.event.steamId}`] = deps.now;
         }
       }
     } else if (!anySourceFailed) {
@@ -184,6 +193,12 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
   const cooldownMs = deps.escalateConfig.kdCooldownDays * 86_400_000;
   for (const [steamId, at] of Object.entries(deps.state.kdAlerted)) {
     if (deps.now - at >= cooldownMs) delete deps.state.kdAlerted[steamId];
+  }
+  for (const [key, at] of Object.entries(deps.state.rateAlerted)) {
+    if (deps.now - at >= cooldownMs) delete deps.state.rateAlerted[key];
+  }
+  for (const [key, baseline] of Object.entries(deps.state.baselines)) {
+    if (deps.now - baseline.at >= BASELINE_TTL_MS) delete deps.state.baselines[key];
   }
 
   await deps.save(deps.state);

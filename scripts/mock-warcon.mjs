@@ -102,12 +102,25 @@ createServer((req, res) => {
     });
   }
 
+  const dossier = /\/players\/(\d+)$/.exec(p);
+  if (dossier) {
+    const serverId = p.split('/')[3];
+    return json(res, {
+      ok: true,
+      // Delta's usual is 8/hour over 100 hours, so the mock's 18/hour is also a surge.
+      dossier: {
+        perServer: [{ serverId, minutes: 6000, kills: dossier[1].endsWith('4') ? 800 : 100, deaths: 50 }]
+      }
+    });
+  }
+
   if (p.endsWith('/leaderboard')) {
     return json(res, {
       ok: true,
       rows: [
         { steamId: '76561190000000001', name: 'Alpha', minutes: 400, kills: 52, deaths: 10, matches: 9 },
-        { steamId: '76561190000000002', name: 'Bravo', minutes: 300, kills: 20, deaths: 20, matches: 8 }
+        { steamId: '76561190000000002', name: 'Bravo', minutes: 300, kills: 20, deaths: 20, matches: 8 },
+        { steamId: '76561190000000004', name: 'Delta', minutes: 600, kills: 180, deaths: 12, matches: 9 }
       ]
     });
   }

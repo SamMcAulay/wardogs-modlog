@@ -4,6 +4,7 @@ import { consoleLogger } from './log.js';
 import { runCycle } from './runner.js';
 import { pollAudit } from './sources/audit.js';
 import { pollKd } from './sources/kd.js';
+import { pollKillRate } from './sources/killrate.js';
 import { pollKills } from './sources/kills.js';
 import { pollWatchlist } from './sources/watchlist.js';
 import { loadState, saveState } from './state.js';
@@ -70,6 +71,22 @@ async function main(): Promise<void> {
               minMatches: config.kdMinMatches,
               minMinutes: config.kdMinMinutes,
               range: config.kdRange
+            },
+            now
+          ),
+        killRate: (id) =>
+          pollKillRate(
+            client,
+            id,
+            state,
+            {
+              sweatPerHour: config.sweatPerHour,
+              sweatRange: config.sweatRange,
+              surgeRange: config.surgeRange,
+              surgePerHour: config.surgePerHour,
+              surgeRatio: config.surgeRatio,
+              surgeHistoryMinutes: config.surgeHistoryMinutes,
+              minMinutes: config.rateMinMinutes
             },
             now
           )
