@@ -19,6 +19,9 @@ feed-health warning:
 | Kick, ban, unban by an admin | no — a record, not an alarm |
 | Feed quiet: a configured kill feed has gone silent for `FEED_QUIET_MINUTES` with players on | no — a health warning, once until the feed resumes |
 
+`PING_ON` narrows the "yes" rows: `PING_ON=none` posts everything without a single ping, and
+`PING_ON=watchedJoin` keeps only the watched-player ping. The alerts still post either way.
+
 Chat is out of scope: the game's feed carries no chat events at all, and Warcon's
 `/v1` surface has no chat-read route, so there is no source to read.
 
@@ -125,6 +128,7 @@ this, since server labels are things like `EU#1` and `NA#3`.
 | `KD_POLL_INTERVAL_MS` | How often the K/D leaderboard is polled (default `3600000`) |
 | `REQUEST_TIMEOUT_MS` | Per-request timeout to Warcon (default `10000`) |
 | `STATE_PATH` | Where cursor/state JSON is written (default `/data/state.json`) |
+| `PING_ON` | Alert kinds that mention the mod role: any of `teamKill`, `watchedJoin`, `highKd`, or `none` (default: all three) |
 | `TEAM_KILL_PING_AT` | Team kills by one player in a match before the mod role is pinged (default `3`) |
 | `KD_THRESHOLD` | K/D at or above which a player is flagged (default `4.0`) |
 | `KD_MIN_MATCHES` | Minimum matches before a K/D flag counts (default `5`) |

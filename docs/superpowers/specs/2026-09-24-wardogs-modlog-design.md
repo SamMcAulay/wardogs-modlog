@@ -292,6 +292,11 @@ reported as new.
 
 ## 8. Rules
 
+`PING_ON` (added 2026-09-26) lists which of the three pinging kinds actually mention the
+role; `none` silences all of them. A kind left out still posts its embed, and still counts:
+team-kill totals and K/D cooldowns advance exactly as if it pinged, so turning a ping back on
+does not replay or re-flag anything.
+
 ### 8.1 Team kills
 
 Count team kills per `killer.steamId` per server, within the current match, held in
@@ -431,6 +436,7 @@ KD_POLL_INTERVAL_MS        3600000
 REQUEST_TIMEOUT_MS         10000
 STATE_PATH                 /data/state.json
 
+PING_ON                    teamKill,watchedJoin,highKd   (or none)
 TEAM_KILL_PING_AT          3
 KD_THRESHOLD               4.0
 KD_MIN_MATCHES             5

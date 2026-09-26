@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'vitest';
-import { escalate, type EscalateConfig } from '../src/escalate.js';
+import { escalate, PING_KINDS, type EscalateConfig } from '../src/escalate.js';
 import { emptyState, serverState } from '../src/state.js';
 import type { ModEvent, TeamKillEvent } from '../src/events.js';
 
-const cfg: EscalateConfig = { teamKillPingAt: 3, kdCooldownDays: 7 };
+const cfg: EscalateConfig = { teamKillPingAt: 3, kdCooldownDays: 7, pingOn: new Set(PING_KINDS) };
 const NOW = Date.parse('2026-09-24T12:00:00.000Z');
 
 const tk = (eventId: string, eventTime: number, killer = '765'): TeamKillEvent => ({
@@ -157,5 +157,50 @@ describe('other kinds', () => {
       NOW
     );
     expect(out[0]!.ping).toBe(false);
+  });
+});
+
+describe('ping toggle', () => {
+  const watched: ModEvent = {
+    kind: 'watchedJoin',
+    serverId: 's1',
+    at: '2026-09-24T12:00:00.000Z',
+    steamId: '900',
+    name: 'Watched'
+  };
+  const highKd: ModEvent = {
+    kind: 'highKd',
+    serverId: 's1',
+    at: '2026-09-24T12:00:00.000Z',
+    steamId: '901',
+    name: 'Sharp',
+    kd: 6,
+    kills: 60,
+    deaths: 10,
+    matches: 8,
+    minutes: 300
+  };
+
+  test('with pings off every alert still posts, just without a ping', () => {
+    const state = emptyState();
+    const off: EscalateConfig = { ...cfg, pingOn: new Set() };
+    const out = escalate([tk('a', 10), tk('b', 20), tk('c', 30), watched, highKd], state, off, NOW);
+    expect(out).toHaveLength(5);
+    expect(out.every((d) => d.ping === false)).toBe(true);
+  });
+
+  test('with pings off the counts and cooldowns still advance', () => {
+    const state = emptyState();
+    const off: EscalateConfig = { ...cfg, pingOn: new Set() };
+    const out = escalate([tk('a', 10), tk('b', 20), tk('c', 30), highKd], state, off, NOW);
+    expect((out[2]!.event as TeamKillEvent).count).toBe(3);
+    expect(state.kdAlerted['901']).toBe(NOW);
+  });
+
+  test('only the listed kinds ping', () => {
+    const state = emptyState();
+    const some: EscalateConfig = { ...cfg, pingOn: new Set(['watchedJoin'] as const) };
+    const out = escalate([tk('a', 10), tk('b', 20), tk('c', 30), watched, highKd], state, some, NOW);
+    expect(out.map((d) => d.ping)).toEqual([false, false, false, true, false]);
   });
 });

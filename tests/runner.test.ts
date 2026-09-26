@@ -2,6 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
+import { PING_KINDS } from '../src/escalate.js';
 import { runCycle, type CycleDeps } from '../src/runner.js';
 import { emptyState, loadState, saveState, serverState, type State } from '../src/state.js';
 import type { DiscordMessage } from '../src/discord.js';
@@ -36,7 +37,7 @@ function deps(over: Partial<CycleDeps> = {}): CycleDeps {
     now: NOW,
     runKd: false,
     logger: silent,
-    escalateConfig: { teamKillPingAt: 3, kdCooldownDays: 7 },
+    escalateConfig: { teamKillPingAt: 3, kdCooldownDays: 7, pingOn: new Set(PING_KINDS) },
     links: { panelPublicUrl: 'https://panel.example.com', serverLabels: {} },
     modRoleId: '999',
     sources: {
