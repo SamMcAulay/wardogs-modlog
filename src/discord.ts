@@ -136,7 +136,7 @@ function embedFor(e: ModEvent, links: LinkConfig): Embed {
         fields.push(field(`Playtime (${e.sweat.range})`, hours(e.sweat.minutes)));
       }
       if (e.surge) {
-        fields.push(field(`Kills/hour (${e.surge.range})`, e.surge.perHour.toFixed(1)));
+        fields.push(field(`Recent kills/hour (${e.surge.range})`, e.surge.perHour.toFixed(1)));
         fields.push(
           field('Usual kills/hour', `${e.surge.usualPerHour.toFixed(1)} over ${hours(e.surge.usualMinutes)}`)
         );

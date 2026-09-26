@@ -82,11 +82,18 @@ export interface BoardRow {
   kills: number;
   deaths: number;
   matches: number;
+  /**
+   * Minutes of `minutes` spent seeding. Warcon's own `perHour` leaves them out:
+   * kills / ((minutes - seedMinutes) / 60). Absent (the mock, older panels) reads as 0.
+   */
+  seedMinutes?: number;
 }
 
 export interface BoardBody {
   ok: boolean;
   rows: BoardRow[];
+  /** the query Warcon actually ran; it falls back to another sort for one it doesn't know */
+  query?: { sort?: string };
 }
 
 /** One server's all-time totals from a player's dossier (tiered-alerts spec §4). */

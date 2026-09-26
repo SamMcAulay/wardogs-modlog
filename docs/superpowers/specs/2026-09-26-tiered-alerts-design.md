@@ -45,10 +45,14 @@ A player whose kill rate over `SWEAT_RANGE` (default `30d`) is at least `SWEAT_P
 range.
 
 - Source: `GET /api/servers/{id}/leaderboard?scope=server&range={SWEAT_RANGE}&sort=perHour&dir=desc&minMinutes={RATE_MIN_MINUTES}&page={n}`.
-- Kill rate is computed by the bot as `kills / (minutes / 60)` from the row, so the threshold
-  never depends on how the panel rounds its own column.
+- Kill rate is computed by the bot from the row, with **Warcon's own formula**:
+  `kills / ((minutes - seedMinutes) / 60)`, seeding time left out (a row without
+  `seedMinutes` reads it as 0; no active minutes reads as 0 kills an hour). So the figure in
+  the alert matches the panel's `perHour`, and the threshold never depends on how the panel
+  rounds its own column. The alert's playtime is still total minutes played.
 - Paging: fifty rows a page. Read page 1; read the next page only while the page was full and
-  its last row is still at or above the threshold. Stop after four pages.
+  its last row is still at or above the threshold, by that same seed-excluded rate. That is
+  the rate the panel sorts by, so paging can never stop early. Stop after four pages.
 
 ## 4. Surge
 
@@ -65,8 +69,17 @@ hours): a player's first week is not compared against almost nothing. The all-ti
 includes the recent week. That makes a surge slightly harder to trigger, never easier, and is
 accepted.
 
+**Seeding.** The usual rate includes seeding time, and the dossier does not say how much of it
+was seeding. So a surge compares **seed-inclusive** rates: the recent rate, the
+`SURGE_PER_HOUR` floor and the ratio all use `kills / (minutes / 60)`, unlike the sweat (§3).
+This is a known bias: a player who seeded heavily in the past and little this week can read as
+a mild surge. Removing it needs a seed-excluded usual rate, which the dossier doesn't expose.
+The embed labels the surge's figure `Recent kills/hour` so it is not confused with a sweat's.
+
 - Candidates come from the `SURGE_RANGE` leaderboard, sorted by `perHour`, paged as in §3 while
-  rows are at or above `SURGE_PER_HOUR`. They are taken highest recent rate first.
+  rows are at or above `SURGE_PER_HOUR` by the panel's seed-excluded rate (never below the
+  inclusive one, so paging cannot stop early); the seed-inclusive floor is applied after.
+  They are taken highest recent rate first.
 - **Request budget.** Warcon allows 120 requests a minute per client, and the bot's regular
   polling already uses roughly 36–48 (three or four reads per server every 30 seconds). So
   the bot:
@@ -90,9 +103,9 @@ interface KillRateEvent {
   at: string;
   steamId: string;
   name: string;
-  sweat: { perHour: number; kills: number; minutes: number; range: string } | null;
+  sweat: { perHour: number; kills: number; minutes: number; range: string } | null; // perHour seed-excluded (§3)
   surge: {
-    perHour: number;          // over SURGE_RANGE
+    perHour: number;          // over SURGE_RANGE, seeding included (§4)
     minutes: number;          // played over SURGE_RANGE
     usualPerHour: number;     // all-time on this server
     usualMinutes: number;
@@ -105,8 +118,9 @@ interface KillRateEvent {
 At least one of `sweat` and `surge` is non-null. The embed:
 
 - Title: `{label} · Sweat — {name}`, `Surge — {name}` or `Sweat + surge — {name}`.
-- Fields: kills per hour and playtime for each part present; for a surge, the usual rate and
-  the ratio (`1.8×`).
+- Fields: kills per hour and playtime for each part present (the surge's rate is labelled
+  `Recent kills/hour`, so the two stay distinct even when both ranges match); for a surge, the
+  usual rate and the ratio (`1.8×`).
 - Link: the player's dossier, as the K/D embed already does.
 
 A usual rate of zero, where the player has history but no recorded kills, makes the ratio

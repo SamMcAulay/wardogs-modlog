@@ -202,6 +202,19 @@ describe('kill-rate embed', () => {
     expect(e.title).toBe('NA#3 · Sweat + surge — Alpha');
     expect(e.fields).toContainEqual({ name: 'Vs usual', value: '1.8×', inline: true });
     expect(e.fields).toContainEqual({ name: 'Usual kills/hour', value: '12.0 over 100.0 h', inline: true });
+    expect(e.fields).toContainEqual({ name: 'Recent kills/hour (7d)', value: '21.0', inline: true });
+  });
+
+  test('sweat and surge rate fields keep distinct names when both use the same range', () => {
+    const m = buildMessage(
+      { event: { ...base, sweat, surge: { ...surge, range: '30d' } }, ping: true },
+      links,
+      ROLE
+    );
+    const names = m.embeds[0]!.fields!.map((f) => f.name);
+    expect(names).toContain('Kills/hour (30d)');
+    expect(names).toContain('Recent kills/hour (30d)');
+    expect(new Set(names).size).toBe(names.length);
   });
 
   test('an infinite ratio reads as new', () => {

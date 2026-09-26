@@ -84,6 +84,25 @@ describe('sweats', () => {
     await pollKillRate(client, 's1', emptyState(), cfg, NOW);
     expect(paths.filter((p) => p.includes('range=30d'))).toHaveLength(1);
   });
+
+  test("uses the panel's rate, which leaves seeding time out", async () => {
+    // 150 kills over 660 minutes, 60 of them seeding: 15.0 an hour by Warcon's formula.
+    const seeder: BoardRow = { ...row('s', 0), kills: 150, minutes: 660, seedMinutes: 60 };
+    const { client } = panel({ boards: { '30d': [seeder] } });
+    const [e] = (await pollKillRate(client, 's1', emptyState(), cfg, NOW)) as KillRateEvent[];
+    expect(e!.sweat).toEqual({ perHour: 15, kills: 150, minutes: 660, range: '30d' });
+  });
+
+  test('keeps paging past a last row that is above the threshold only once seeding is left out', async () => {
+    // 150 kills over 900 minutes is 10/hour, but 300 of them were seeding: 15/hour on the panel.
+    const heavySeeder: BoardRow = { ...row('seed', 0), kills: 150, minutes: 900, seedMinutes: 300 };
+    const rows = [...Array.from({ length: PAGE_SIZE - 1 }, (_, i) => row(`h${i}`, 30)), heavySeeder, row('next', 16)];
+    const { client, paths } = panel({ boards: { '30d': rows } });
+    const events = (await pollKillRate(client, 's1', emptyState(), cfg, NOW)) as KillRateEvent[];
+    expect(paths.filter((p) => p.includes('range=30d'))).toHaveLength(2);
+    expect(events.map((e) => e.steamId)).toContain('seed');
+    expect(events.map((e) => e.steamId)).toContain('next');
+  });
 });
 
 describe('surges', () => {
@@ -94,6 +113,32 @@ describe('surges', () => {
       perHour: 15, minutes: 300, usualPerHour: 10, usualMinutes: 6000, ratio: 1.5, range: '7d'
     });
     expect(e!.sweat).toBeNull();
+  });
+
+  test('compares the seed-inclusive recent rate with the usual rate', async () => {
+    // 75 kills over 300 minutes is 15/hour with seeding in (22.5 without): the usual rate
+    // includes seeding, so the ratio is 15 / 10.
+    const seeder: BoardRow = { ...row('a', 0, 300), kills: 75, seedMinutes: 100 };
+    const { client } = panel({ boards: { '7d': [seeder] }, dossiers: { a: usual(10) } });
+    const [e] = (await pollKillRate(client, 's1', emptyState(), cfg, NOW)) as KillRateEvent[];
+    expect(e!.surge).toEqual({
+      perHour: 15, minutes: 300, usualPerHour: 10, usualMinutes: 6000, ratio: 1.5, range: '7d'
+    });
+  });
+
+  test('the surge floor uses the seed-inclusive rate, but paging never stops early', async () => {
+    // 'mild' is 12/hour on the panel but 9/hour with seeding in: under the floor.
+    const mild: BoardRow = { ...row('mild', 0, 400), kills: 60, seedMinutes: 100 };
+    const rows = [...Array.from({ length: PAGE_SIZE - 1 }, (_, i) => row(`h${i}`, 30, 300)), mild, row('next', 20, 300)];
+    const dossiers = Object.fromEntries(rows.map((r) => [r.steamId, usual(10)]));
+    const state = emptyState();
+    for (const r of rows) state.baselines[`s1:${r.steamId}`] = { perHour: 10, minutes: 6000, at: NOW };
+    const { client, paths } = panel({ boards: { '7d': rows }, dossiers });
+    const events = (await pollKillRate(client, 's1', state, cfg, NOW)) as KillRateEvent[];
+    expect(paths.filter((p) => p.includes('range=7d'))).toHaveLength(2);
+    const ids = events.map((e) => e.steamId);
+    expect(ids).not.toContain('mild');
+    expect(ids).toContain('next');
   });
 
   test('is no surge below the ratio, below the floor, or without enough history', async () => {

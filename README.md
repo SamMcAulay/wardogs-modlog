@@ -26,6 +26,12 @@ one alert, and one ping. Sweats and surges come from the scoreboard, like K/D, s
 need the kill feed. `PING_ON` chooses which tier-3 alerts ping: `sweat`, `surge`, or `none`
 (the default is both).
 
+A sweat's kills an hour is the panel's own figure, with seeding time left out, so it matches
+the leaderboard. A surge compares rates with seeding left **in**, because a player's usual
+rate (from their dossier) includes it and the panel doesn't say how much of it was seeding.
+The known cost: a player who seeded a lot in the past and little this week can read as a mild
+surge. The surge's figure is labelled `Recent kills/hour` to keep the two apart.
+
 Chat is out of scope: the game's feed carries no chat events at all, and Warcon's
 `/v1` surface has no chat-read route, so there is no source to read.
 
