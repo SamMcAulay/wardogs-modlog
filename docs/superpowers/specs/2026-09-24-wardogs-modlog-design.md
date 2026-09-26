@@ -1,6 +1,6 @@
 # Wardogs moderation log bot
 
-A sixth Discord bot, separate from the five status bots, that watches the Warcon
+A separate Discord bot, apart from the six status bots, that watches the Warcon
 panel and reports moderation-relevant events into a staff channel — pinging a mod
 role when something needs a human now, and posting quietly when it is only a record.
 
@@ -52,7 +52,7 @@ answer if the underlying concern is offensive text reaching other players.
 A **separate repository** (`wardogs-modlog`), its own container, on the same VPS and
 the same `warcon_default` Docker network as the status fleet.
 
-Not a sixth client inside the WDstats process, and not a second service in that repo.
+Not a seventh client inside the WDstats process, and not a second service in that repo.
 The shared surface is roughly forty lines of auth-header plumbing, while the costs of
 coupling are real: this bot will churn as thresholds are tuned, and the status fleet —
 stable, stateless, and the thing players actually see — should not be redeployed for
@@ -260,6 +260,7 @@ interface State {
     lastFeedAt: string | null;  // for the quiet-feed check
     lastEventTime: number;      // newest match-clock value seen, for match boundaries
     teamKills: Record<string, number>;  // steamId → count in the current match
+    warm: boolean;              // has completed one clean cycle; false = cold (below)
   }>;
   kdAlerted: Record<string, number>;  // steamId → epoch ms of last K/D alert
   startedAt: number;
@@ -280,6 +281,14 @@ each source, stores the cursors, writes state, and reports nothing on that first
 cycle. A bot that floods the staff channel with a month of backfill on first boot is
 one that gets muted within the hour. The same applies per server when a new server id
 first appears.
+
+Cold start is tracked **per server and persisted** as `warm`, which is false for a
+server id with no entry, and for an entry from a state file written before the field
+existed. A server that is not warm reads its sources and records their cursors but
+posts nothing. It turns warm after a cycle in which its kills, audit and watchlist
+sources all succeeded (the K/D board has no cursor and does not count). So a first
+boot during a Warcon outage stays cold across restarts, and its backlog is never
+reported as new.
 
 ## 8. Rules
 
@@ -346,6 +355,28 @@ a kill-feed config that did not take — a failure mode the Warcon docs call out
 explicitly, since a config written before the `/api/ingest/events` suffix was known
 produces a path Warcon does not serve. Reset the warning when `feedAt` advances.
 
+### 8.5 Server identity
+
+Staff watch six servers from one channel, so **every alert names its server** before
+anything else. The label comes from `SERVER_LABELS`, comma-separated `serverId=Label`
+pairs such as `"0eec…=EU#1,c83b…=NA#3"` — the same short names players and the status
+bots use. A server with no label falls back to the first eight characters of its id,
+which is ugly on purpose: it shows up in the channel and gets fixed. Preflight prints
+every server's label beside the live `serverName` Warcon reports, and warns for each
+server without one.
+
+The label appears in two places:
+
+- **The embed title**, as a prefix: `NA#3 · Team kill — Alpha (3)`. The title is what a
+  channel notification previews, so the server is legible without opening Discord. The
+  prefix counts toward the 256-character title limit.
+- **The mention line**, when the alert pings: `<@&role> **NA#3**`. That line is what a
+  mod's phone shows for a mention, and it is the one they act on.
+
+Labels are configured rather than read from the live `serverName`, because a label
+must exist when a server's summary cannot be fetched — which is exactly when feed-health
+and admin-action alerts still need to say where they came from.
+
 ## 9. Failure handling
 
 Follows the status fleet's existing conventions (`src/warcon.ts`, `src/schedule.ts`).
@@ -354,8 +385,9 @@ Follows the status fleet's existing conventions (`src/warcon.ts`, `src/schedule.
 | --- | --- |
 | Cloudflare Access bounce | log as an error, distinct from an auth rejection |
 | Warcon 401 / 403 | log `warcon auth rejected`, naming the likely missing capability |
-| Fetch timeout / 5xx | per-server exponential backoff, ceiling 5 minutes |
+| Fetch timeout / 5xx | log it and move on; the failing server is retried on the next cycle |
 | Discord post fails | keep the event unacknowledged; do not advance the cursor |
+| Discord rejects the post (4xx other than 429) | log as an error with the status and message, count it as delivered, carry on. The same body would fail every retry and block the server forever |
 | State file missing | cold start (§7) |
 | State file corrupt | log loudly, treat as cold start, move the bad file aside |
 
@@ -373,6 +405,12 @@ cheaper failure than a missed ban.
 One source failing must not stop the others: each is wrapped independently, and a
 server that is unreachable does not block the rest of the fleet.
 
+There is no per-server backoff. Cycles run in a self-scheduling loop: the next cycle is
+queued only after the current one has settled, so cycles never overlap or pile up.
+Every Warcon request is bounded by `REQUEST_TIMEOUT_MS`, which caps how long one
+unreachable server can slow a cycle. A failing server is retried every cycle, and
+each failure is logged.
+
 ## 10. Configuration
 
 ```
@@ -386,7 +424,8 @@ DISCORD_TOKEN              the modlog bot
 DISCORD_CHANNEL_ID         the staff channel
 DISCORD_MOD_ROLE_ID        the role mentioned on escalation
 
-SERVER_IDS                 comma-separated; empty means every server the key can see
+SERVER_IDS                 comma-separated; required — the bot refuses to start empty
+SERVER_LABELS              serverId=Label pairs, comma-separated; quote it (§8.5)
 POLL_INTERVAL_MS           30000
 KD_POLL_INTERVAL_MS        3600000
 REQUEST_TIMEOUT_MS         10000
@@ -427,6 +466,9 @@ gate.
   factions and a Kills-tab link built from `PANEL_PUBLIC_URL`, not `WARCON_BASE_URL` —
   a test that would otherwise only fail in production, where the internal container
   address is unreachable from a browser.
+- **Server identity**: every embed title starts with its server's label, a pinging
+  message names the server beside the mention, and an unlabelled server falls back to
+  its short id.
 - **Cursor safety**: a Discord failure must leave the cursor unadvanced, and the next
   cycle must re-report the same event.
 

@@ -20,6 +20,7 @@
 - **Cold start posts nothing** — record position, write state, report nothing (spec §7).
 - **`PANEL_PUBLIC_URL` builds links for humans; `WARCON_BASE_URL` makes API calls.** Never swap them: the latter is `http://warcon:3000`, unreachable from a browser.
 - Every `.env` value containing `#` must be quoted, or dotenv truncates it.
+- **Every alert names its server first** — `SERVER_LABELS` label, short-id fallback (spec §8.5). Added 2026-09-25 as Amendment A; the amendment blocks inside Tasks 9–12 are binding.
 - Test runner: `npx vitest run`. Typecheck: `npx tsc --noEmit`.
 
 ---
@@ -911,7 +912,7 @@ Expected: FAIL — cannot resolve `../src/state.js`.
 
 ```ts
 import { readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 /** Per-server ring of recently seen kill event ids (spec §7). */
 export const SEEN_KILL_CAP = 500;
@@ -968,12 +969,22 @@ export function serverState(state: State, serverId: string): ServerState {
   return fresh;
 }
 
-/** Push ids newest-first, skipping duplicates, evicting past the cap. */
+/**
+ * Prepend ids, preserving their order, skipping duplicates, evicting past the cap.
+ *
+ * `ids` arrives newest-first (the kills API's own order) and the ring is
+ * newest-first, so the batch is prepended as a block. Unshifting one at a time in a
+ * loop would reverse the batch and leave its OLDEST entry at the front.
+ */
 export function rememberKillIds(s: ServerState, ids: string[]): void {
+  const known = new Set(s.seenKillIds);
+  const fresh: string[] = [];
   for (const id of ids) {
-    if (s.seenKillIds.includes(id)) continue;
-    s.seenKillIds.unshift(id);
+    if (known.has(id)) continue;
+    known.add(id);
+    fresh.push(id);
   }
+  s.seenKillIds = [...fresh, ...s.seenKillIds];
   if (s.seenKillIds.length > SEEN_KILL_CAP) s.seenKillIds.length = SEEN_KILL_CAP;
 }
 
@@ -1009,7 +1020,7 @@ export async function loadState(path: string): Promise<State> {
 
 /** Write to a temp file in the same directory, then rename — rename is atomic. */
 export async function saveState(path: string, state: State): Promise<void> {
-  const tmp = join(dirname(path), `${path.split('/').pop()}.tmp`);
+  const tmp = join(dirname(path), `${basename(path)}.tmp`);
   await writeFile(tmp, JSON.stringify({ ...state, cold: undefined }, null, 2), 'utf8');
   await rename(tmp, path);
 }
@@ -2377,6 +2388,31 @@ git commit -m "feat: Discord embeds with inference evidence and role mentions"
 
 ---
 
+#### Amendment A — server identity (spec §8.5), binding
+
+Apply on top of the steps above, in the same commit or a follow-up commit within this task.
+
+**`src/config.ts`** (Task 1's file) — add `serverLabels: Record<string, string>` to `Config`, parsed from `SERVER_LABELS`:
+- unset or empty → `{}`
+- split on `,`, trim each entry, skip empty entries
+- each entry splits on the **first** `=` only, so a label may itself contain `=`; trim both sides
+- an entry with no `=`, or an empty id or empty label, throws `SERVER_LABELS entry "<entry>" is not serverId=Label`
+
+Tests in `tests/config.test.ts`: parses `' a = EU#1 , b=NA#3 ,, '` to `{ a: 'EU#1', b: 'NA#3' }`; defaults to `{}`; keeps `'a=x=y'` as `{ a: 'x=y' }`; throws naming the entry for `'a=EU#1,broken'`.
+
+**`src/discord.ts`**:
+- `LinkConfig` gains `serverLabels: Record<string, string>`.
+- Export `serverLabel(serverId: string, labels: Record<string, string>): string` → `labels[serverId] ?? serverId.slice(0, 8)`.
+- **Every** embed's title becomes `` clamp(`${label} · ${title}`, 256) ``, where `title` is the unclamped per-kind title above. Clamp once, over the whole string.
+- A pinging message's `content` becomes `` `<@&${modRoleId}> **${label}**` ``. `allowed_mentions` is unchanged. A non-pinging message still has no `content`.
+
+Tests in `tests/discord.test.ts` (update the shared `links` fixture to carry `serverLabels: { s1: 'NA#3' }`, and adjust any existing title assertion to the prefixed form):
+- a team kill's title starts with `NA#3 · Team kill — Alpha`
+- the feed-quiet title is `NA#3 · Kill feed has gone quiet`
+- a pinging message's content is `<@&999> **NA#3**`; a non-pinging one has no `content`
+- an unlabelled server id `c83bc8e1-ef6f-4d55-9398-b1a6f6faa2a8` produces a title starting `c83bc8e1 · `
+- the 256-character title limit still holds with a label prefix and a very long player name
+
 ### Task 10: The polling loop
 
 **Files:**
@@ -2545,6 +2581,43 @@ describe('runCycle', () => {
     expect(serverState(state, 's1').lastAuditId).toBe(0);
   });
 
+  test('a failed post also rolls back the K/D cooldown', async () => {
+    const state = emptyState();
+    state.cold = false;
+    await runCycle(
+      deps({
+        state,
+        runKd: true,
+        sources: {
+          kills: async () => [],
+          audit: async () => [],
+          watchlist: async () => [],
+          kd: async () => [
+            {
+              kind: 'highKd',
+              serverId: 's1',
+              at: '2026-09-24T12:00:00.000Z',
+              steamId: '765',
+              name: 'Alpha',
+              kd: 5.2,
+              kills: 52,
+              deaths: 10,
+              matches: 9,
+              minutes: 400
+            }
+          ]
+        },
+        poster: {
+          post: async () => {
+            throw new Error('discord 500');
+          }
+        }
+      })
+    );
+    // Nobody was told, so the seven-day cooldown must not have started.
+    expect(state.kdAlerted['765']).toBeUndefined();
+  });
+
   test('a successful post keeps the advanced cursor', async () => {
     const state = emptyState();
     state.cold = false;
@@ -2625,7 +2698,12 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
 
   for (const serverId of deps.serverIds) {
     const s = serverState(deps.state, serverId);
+    // escalate() writes to BOTH the server entry and the global kdAlerted map, so a
+    // failed post has to roll back both — otherwise a K/D alert nobody received still
+    // starts its cooldown and the player goes unreported for days. Snapshotting
+    // kdAlerted per server (not once per cycle) preserves earlier servers' alerts.
     const snapshot = structuredClone(s);
+    const kdSnapshot = { ...deps.state.kdAlerted };
 
     const collected: ModEvent[] = [];
     const run = async (name: string, fn: () => Promise<ModEvent[]>): Promise<void> => {
@@ -2661,7 +2739,10 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
       }
     }
 
-    if (failed) deps.state.servers[serverId] = snapshot;
+    if (failed) {
+      deps.state.servers[serverId] = snapshot;
+      deps.state.kdAlerted = kdSnapshot;
+    }
   }
 
   deps.state.cold = false;
@@ -2784,6 +2865,10 @@ git commit -m "feat: polling loop with cursor safety and per-source error contai
 
 ---
 
+#### Amendment A — server identity (spec §8.5), binding
+
+`src/index.ts` passes the labels through: `links: { panelPublicUrl: config.panelPublicUrl, serverLabels: config.serverLabels }`. The runner test's `links` fixture gains `serverLabels: {}`. Log lines keep the raw server id — logs are for grepping, not reading at a glance.
+
 ### Task 11: Preflight and mock panel
 
 **Files:**
@@ -2860,6 +2945,8 @@ Expected: FAIL — cannot resolve `../src/preflight.js`.
 - [ ] **Step 3: Implement `src/preflight.ts`**
 
 ```ts
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { loadConfig, type Config } from './config.js';
 import { CloudflareBlockedError, WarconAuthError, WarconClient } from './warcon.js';
 
@@ -2942,7 +3029,19 @@ async function main(): Promise<void> {
 }
 
 // Only run as a CLI, so the tests can import checkAll without side effects.
-if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop() ?? '')) {
+// Compare resolved paths: matching on the basename alone would also fire when a
+// test runner's argv happened to end the same way.
+const invokedDirectly = (): boolean => {
+  const arg = process.argv[1];
+  if (!arg) return false;
+  try {
+    return realpathSync(arg) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+};
+
+if (invokedDirectly()) {
   main().catch((err) => {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
@@ -3092,6 +3191,16 @@ git commit -m "feat: preflight credential gate and mock panel"
 ```
 
 ---
+
+#### Amendment A — server identity (spec §8.5), binding
+
+- The test `config` fixture gains `serverLabels: { s1: 'EU#1' }`.
+- After the four endpoint checks for a server, push one more result named `label (<id>)`, **always `ok: true`** — a missing label must never fail a deploy:
+  - labelled: detail `EU#1 (Warcon calls it "<live serverName>")`, the live name taken from the summary response already fetched (`live?.status?.serverName`, or `unknown` when absent or the summary failed)
+  - unlabelled: detail `none — alerts will show "<first 8 chars of id>"; add it to SERVER_LABELS`
+- Reuse `serverLabel` from `src/discord.ts` rather than repeating the fallback. Keep the summary response from the endpoint loop instead of fetching it twice.
+- Tests: a labelled server's label result is ok and names both the label and the live name; an unlabelled server's result is ok and contains `add it to SERVER_LABELS`.
+- `scripts/mock-warcon.mjs` serves any server id it is asked for (a live name of `Mock <first 8 chars>`), so `SERVER_IDS` can list all six real servers against the mock.
 
 ### Task 12: Containerisation, deployment and documentation
 
@@ -3320,6 +3429,18 @@ git commit -m "feat: containerisation, deploy pipeline and documentation"
 
 ---
 
+#### Amendment A — server identity and the six servers, binding
+
+**`.env.example`** (Task 1's file): replace the `# Empty means every server the key can see` comment and the empty `SERVER_IDS=` with the six real servers and their labels. Quote the labels — they contain `#`:
+
+```
+# Required: the servers to watch. Every alert is prefixed with its SERVER_LABELS label.
+SERVER_IDS=0eec42dc-f73f-4e43-a62e-7e0900fcf38c,61dd0256-b780-40b5-a9fa-2b5bc542ce88,0abd34ac-c564-4d2e-9853-263d707528c3,33daa183-8c52-41f8-b936-b8524eaf7387,ff450efd-8080-4cab-a0ac-e5a3bf8fbf5f,c83bc8e1-ef6f-4d55-9398-b1a6f6faa2a8
+SERVER_LABELS="0eec42dc-f73f-4e43-a62e-7e0900fcf38c=EU#1,61dd0256-b780-40b5-a9fa-2b5bc542ce88=EU#2,0abd34ac-c564-4d2e-9853-263d707528c3=NA#1,33daa183-8c52-41f8-b936-b8524eaf7387=NA#2,ff450efd-8080-4cab-a0ac-e5a3bf8fbf5f=Hardcore,c83bc8e1-ef6f-4d55-9398-b1a6f6faa2a8=NA#3"
+```
+
+**`README.md`**: the configuration table lists `SERVER_LABELS`, and the README gains an **Adding a server** section with the three steps NA#3 needed: add the id to `SERVER_IDS`, add its label to `SERVER_LABELS`, and add the server to the modlog Warcon key's server scope — without that last step preflight fails with a Warcon rejection for that server. Mention the example of an alert title, `NA#3 · Team kill — Alpha (3)`, where the README describes what gets posted.
+
 ## Self-Review
 
 **Spec coverage:**
@@ -3329,6 +3450,7 @@ git commit -m "feat: containerisation, deploy pipeline and documentation"
 | §2 scope, four event kinds | 6, 7, 8 |
 | §2.1 chat out of scope | documented, Task 12 step 6 |
 | §3 separate repo and container | 1, 12 |
+| §8.5 server identity (Amendment A) | 9, 10, 11, 12 |
 | §4.1 key capabilities | 11 (preflight names the missing one), 12 (README) |
 | §4.2 Discord, REST-only | 9 |
 | §5.1 kills, backwards paging | 6 |
