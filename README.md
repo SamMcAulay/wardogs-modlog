@@ -153,6 +153,15 @@ this, since server labels are things like `EU#1` and `NA#3`.
 | `KD_COOLDOWN_DAYS` | Days before the same player can be flagged again for K/D, sweat or surge (each tracked separately) (default `7`) |
 | `FEED_QUIET_MINUTES` | Minutes a configured feed can go quiet, with players on, before a health warning posts (default `30`) |
 
+## Upgrading to tiered alerts
+
+The first hourly kill-rate run posts every current sweat once, as K/D always has. Production
+runs with `PING_ON=none`, so that batch cannot ping. After deploying:
+
+1. Let the first hourly run finish posting — watch the logs — before restarting the bot or
+   changing `.env`.
+2. Then remove `PING_ON=none` to turn tier-3 pings on.
+
 ## Adding a server
 
 Bringing a new server (e.g. NA#3) under watch takes three steps — miss any one and

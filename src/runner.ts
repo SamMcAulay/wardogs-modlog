@@ -75,117 +75,11 @@ export function retryKey(e: ModEvent): string {
  */
 export async function runCycle(deps: CycleDeps): Promise<void> {
   for (const serverId of deps.serverIds) {
-    const s = serverState(deps.state, serverId);
-    // Cold start is per server and persisted (spec §7): a server that has never
-    // completed a clean cycle — first boot, or a server id newly added to SERVER_IDS —
-    // learns where it is and says nothing, so its history is not reported as new.
-    const warm = s.warm;
-    // escalate() writes to BOTH the server entry and the global kdAlerted map, so a
-    // failed post has to roll back both — otherwise a K/D alert nobody received still
-    // starts its cooldown and the player goes unreported for days. Snapshotting
-    // kdAlerted per server (not once per cycle) preserves earlier servers' alerts.
-    const snapshot = structuredClone(s);
-    const kdSnapshot = { ...deps.state.kdAlerted };
-    const rateSnapshot = { ...deps.state.rateAlerted };
-    const baselineSnapshot = { ...deps.state.baselines };
-
-    const collected: ModEvent[] = [];
-    // Only the sources that keep a cursor decide warmth: the K/D board has none, so
-    // it failing leaves nothing un-recorded.
-    let cursorSourceFailed = false;
-    let anySourceFailed = false;
-    const run = async (
-      name: string,
-      fn: () => Promise<ModEvent[]>,
-      hasCursor = true
-    ): Promise<void> => {
-      try {
-        collected.push(...(await fn()));
-      } catch (err) {
-        // One source failing must not stop the others, or one server the rest.
-        deps.logger.warn(`[${serverId}] ${name}: ${err instanceof Error ? err.message : err}`);
-        anySourceFailed = true;
-        if (hasCursor) cursorSourceFailed = true;
-      }
-    };
-
-    await run('kills', () => deps.sources.kills(serverId, s));
-    await run('audit', () => deps.sources.audit(serverId, s));
-    await run('watchlist', () => deps.sources.watchlist(serverId, s));
-    if (deps.runKd) await run('kd', () => deps.sources.kd(serverId), false);
-    if (deps.runKd) await run('killRate', () => deps.sources.killRate(serverId), false);
-
-    if (!warm) {
-      // A cold cycle in which a cursored source failed must not report that source's
-      // backlog as new once it recovers — stay cold until one fully clean cycle.
-      if (!cursorSourceFailed) {
-        s.warm = true;
-        deps.logger.info(`[${serverId}] now warm: position recorded, reporting from the next cycle`);
-      }
-      continue;
-    }
-
-    const decisions = escalate(collected, deps.state, deps.escalateConfig, deps.now);
-
-    // What this server had already delivered before the start of this cycle (i.e. a
-    // pending retry from a failure last cycle) — read off the pre-cycle snapshot, not
-    // the live entry, though sources never touch this field either way.
-    const initialPosted = new Set(snapshot.postedBeforeFailure);
-    const delivered = new Set(initialPosted);
-
-    let failed = false;
-    for (const d of decisions) {
-      const key = retryKey(d.event);
-      if (initialPosted.has(key)) {
-        // Already delivered before a prior failure in this same retry — count it as
-        // delivered again without posting it a second time.
-        deps.logger.info(`[${serverId}] ${key} already posted before a failure, skipping`);
-        continue;
-      }
-      try {
-        await deps.poster.post(buildMessage(d, deps.links, deps.modRoleId));
-        delivered.add(key);
-        deps.logger.info(`[${serverId}] posted ${eventKey(d.event)}${d.ping ? ' (ping)' : ''}`);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const status = permanentRejectionStatus(err);
-        if (status !== null) {
-          // Discord refused this message itself (e.g. an invalid embed); retrying the
-          // same body can only fail again, and rolling back would block this server
-          // forever. Log it loudly, count it as delivered, and carry on.
-          deps.logger.error(
-            `[${serverId}] discord rejected ${eventKey(d.event)} (HTTP ${status}): ${message} — dropped, not retried`
-          );
-          delivered.add(key);
-          continue;
-        }
-        deps.logger.error(`[${serverId}] discord post failed: ${message}`);
-        failed = true;
-        break;
-      }
-    }
-
-    if (failed) {
-      deps.state.servers[serverId] = { ...snapshot, postedBeforeFailure: Array.from(delivered) };
-      deps.state.kdAlerted = kdSnapshot;
-      deps.state.rateAlerted = rateSnapshot;
-      deps.state.baselines = baselineSnapshot;
-      // The snapshot also erased the cooldowns of alerts that DID go out this cycle;
-      // without them the next run would ping those players again.
-      for (const d of decisions) {
-        if (!delivered.has(retryKey(d.event))) continue;
-        if (d.event.kind === 'highKd') deps.state.kdAlerted[d.event.steamId] = deps.now;
-        if (d.event.kind === 'killRate') {
-          if (d.event.sweat) deps.state.rateAlerted[`sweat:${d.event.steamId}`] = deps.now;
-          if (d.event.surge) deps.state.rateAlerted[`surge:${d.event.steamId}`] = deps.now;
-        }
-      }
-    } else if (!anySourceFailed) {
-      // A clean cycle closes out the retry: one-cycle scope only. "Clean" includes
-      // every source: one that threw has not re-read its events yet, and clearing the
-      // list now would let the next cycle post them a second time.
-      s.postedBeforeFailure = [];
-    }
+    await runServer(deps, serverId);
+    // Saved per server, not only at the end: a restart part-way through a cycle (a
+    // deploy during the first kill-rate run, which posts every current sweat) must not
+    // lose the cooldowns of alerts already delivered, or the next run posts them again.
+    await deps.save(deps.state);
   }
 
   // Cooldowns past their expiry no longer suppress anything; drop them so the state
@@ -202,4 +96,119 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
   }
 
   await deps.save(deps.state);
+}
+
+/** One server's sources, decisions and posts, with rollback on a failed post. */
+async function runServer(deps: CycleDeps, serverId: string): Promise<void> {
+  const s = serverState(deps.state, serverId);
+  // Cold start is per server and persisted (spec §7): a server that has never
+  // completed a clean cycle — first boot, or a server id newly added to SERVER_IDS —
+  // learns where it is and says nothing, so its history is not reported as new.
+  const warm = s.warm;
+  // escalate() writes to BOTH the server entry and the global kdAlerted map, so a
+  // failed post has to roll back both — otherwise a K/D alert nobody received still
+  // starts its cooldown and the player goes unreported for days. Snapshotting
+  // kdAlerted per server (not once per cycle) preserves earlier servers' alerts.
+  const snapshot = structuredClone(s);
+  const kdSnapshot = { ...deps.state.kdAlerted };
+  const rateSnapshot = { ...deps.state.rateAlerted };
+  const baselineSnapshot = { ...deps.state.baselines };
+
+  const collected: ModEvent[] = [];
+  // Only the sources that keep a cursor decide warmth: the K/D board has none, so
+  // it failing leaves nothing un-recorded.
+  let cursorSourceFailed = false;
+  let anySourceFailed = false;
+  const run = async (
+    name: string,
+    fn: () => Promise<ModEvent[]>,
+    hasCursor = true
+  ): Promise<void> => {
+    try {
+      collected.push(...(await fn()));
+    } catch (err) {
+      // One source failing must not stop the others, or one server the rest.
+      deps.logger.warn(`[${serverId}] ${name}: ${err instanceof Error ? err.message : err}`);
+      anySourceFailed = true;
+      if (hasCursor) cursorSourceFailed = true;
+    }
+  };
+
+  await run('kills', () => deps.sources.kills(serverId, s));
+  await run('audit', () => deps.sources.audit(serverId, s));
+  await run('watchlist', () => deps.sources.watchlist(serverId, s));
+  if (deps.runKd) await run('kd', () => deps.sources.kd(serverId), false);
+  if (deps.runKd) await run('killRate', () => deps.sources.killRate(serverId), false);
+
+  if (!warm) {
+    // A cold cycle in which a cursored source failed must not report that source's
+    // backlog as new once it recovers — stay cold until one fully clean cycle.
+    if (!cursorSourceFailed) {
+      s.warm = true;
+      deps.logger.info(`[${serverId}] now warm: position recorded, reporting from the next cycle`);
+    }
+    return;
+  }
+
+  const decisions = escalate(collected, deps.state, deps.escalateConfig, deps.now);
+
+  // What this server had already delivered before the start of this cycle (i.e. a
+  // pending retry from a failure last cycle) — read off the pre-cycle snapshot, not
+  // the live entry, though sources never touch this field either way.
+  const initialPosted = new Set(snapshot.postedBeforeFailure);
+  const delivered = new Set(initialPosted);
+
+  let failed = false;
+  for (const d of decisions) {
+    const key = retryKey(d.event);
+    if (initialPosted.has(key)) {
+      // Already delivered before a prior failure in this same retry — count it as
+      // delivered again without posting it a second time.
+      deps.logger.info(`[${serverId}] ${key} already posted before a failure, skipping`);
+      continue;
+    }
+    try {
+      await deps.poster.post(buildMessage(d, deps.links, deps.modRoleId));
+      delivered.add(key);
+      deps.logger.info(`[${serverId}] posted ${eventKey(d.event)}${d.ping ? ' (ping)' : ''}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = permanentRejectionStatus(err);
+      if (status !== null) {
+        // Discord refused this message itself (e.g. an invalid embed); retrying the
+        // same body can only fail again, and rolling back would block this server
+        // forever. Log it loudly, count it as delivered, and carry on.
+        deps.logger.error(
+          `[${serverId}] discord rejected ${eventKey(d.event)} (HTTP ${status}): ${message} — dropped, not retried`
+        );
+        delivered.add(key);
+        continue;
+      }
+      deps.logger.error(`[${serverId}] discord post failed: ${message}`);
+      failed = true;
+      break;
+    }
+  }
+
+  if (failed) {
+    deps.state.servers[serverId] = { ...snapshot, postedBeforeFailure: Array.from(delivered) };
+    deps.state.kdAlerted = kdSnapshot;
+    deps.state.rateAlerted = rateSnapshot;
+    deps.state.baselines = baselineSnapshot;
+    // The snapshot also erased the cooldowns of alerts that DID go out this cycle;
+    // without them the next run would ping those players again.
+    for (const d of decisions) {
+      if (!delivered.has(retryKey(d.event))) continue;
+      if (d.event.kind === 'highKd') deps.state.kdAlerted[d.event.steamId] = deps.now;
+      if (d.event.kind === 'killRate') {
+        if (d.event.sweat) deps.state.rateAlerted[`sweat:${d.event.steamId}`] = deps.now;
+        if (d.event.surge) deps.state.rateAlerted[`surge:${d.event.steamId}`] = deps.now;
+      }
+    }
+  } else if (!anySourceFailed) {
+    // A clean cycle closes out the retry: one-cycle scope only. "Clean" includes
+    // every source: one that threw has not re-read its events yet, and clearing the
+    // list now would let the next cycle post them a second time.
+    s.postedBeforeFailure = [];
+  }
 }

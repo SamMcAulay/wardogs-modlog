@@ -86,7 +86,46 @@ describe('runCycle', () => {
       })
     );
     expect(posted).toHaveLength(1);
-    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledTimes(2); // after the server, then the final save
+  });
+
+  test("saves after each server, so a restart mid-cycle keeps what earlier servers posted", async () => {
+    const order: string[] = [];
+    const saved: State[] = [];
+    const state = warmState('s1', 's2');
+    const rate = (serverId: string): ModEvent => ({
+      kind: 'killRate', serverId, at: '2026-09-24T12:00:00.000Z', steamId: `p-${serverId}`, name: 'R',
+      sweat: { perHour: 20, kills: 200, minutes: 600, range: '30d' }, surge: null
+    });
+    const source = (name: string) => async (id: string) => {
+      order.push(`${name}:${id}`);
+      return name === 'killRate' ? [rate(id)] : [];
+    };
+    await runCycle(
+      deps({
+        serverIds: ['s1', 's2'],
+        state,
+        runKd: true,
+        sources: {
+          kills: source('kills'),
+          audit: source('audit'),
+          watchlist: source('watchlist'),
+          kd: source('kd'),
+          killRate: source('killRate')
+        },
+        save: async (s) => {
+          order.push('save');
+          saved.push(structuredClone(s));
+        }
+      })
+    );
+    // The first save lands before s2's sources run, and the cycle still ends with one.
+    expect(order.indexOf('save')).toBeGreaterThan(order.indexOf('killRate:s1'));
+    expect(order.indexOf('save')).toBeLessThan(order.indexOf('kills:s2'));
+    expect(order.at(-1)).toBe('save');
+    expect(saved.length).toBeGreaterThanOrEqual(3);
+    // What that first save holds: s1's delivered alert and its cooldown stamp.
+    expect(saved[0]!.rateAlerted).toEqual({ 'sweat:p-s1': NOW });
   });
 
   test('a cold start records position and posts nothing', async () => {
@@ -108,7 +147,7 @@ describe('runCycle', () => {
       })
     );
     expect(posted).toHaveLength(0);
-    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledTimes(2); // after the server, then the final save
     expect(serverState(state, 's1').warm).toBe(true); // the next cycle reports normally
   });
 
@@ -560,7 +599,7 @@ describe('runCycle', () => {
       })
     );
     expect(serverState(state, 's1').warm).toBe(false); // still cold — needs one fully clean cycle
-    expect(save).toHaveBeenCalledOnce(); // whatever position we did learn is still saved
+    expect(save).toHaveBeenCalledTimes(2); // whatever position we did learn is still saved (per server, then final)
   });
 
   test('a clean cold cycle warms the server', async () => {

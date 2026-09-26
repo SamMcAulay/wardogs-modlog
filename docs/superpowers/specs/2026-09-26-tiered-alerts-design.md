@@ -143,8 +143,10 @@ infinite. It counts as a surge and the embed shows `new`, not a ratio.
   startup with an error explaining that only tier-3 alerts ping. The deploy's preflight then
   fails instead of starting a bot that ignores the setting.
 
-**Operator note.** The live VPS has `PING_ON=none`. After this ships, remove that line to get
-tier-3 pings.
+**Operator note.** The live VPS has `PING_ON=none`. After this ships, let the first hourly
+run finish posting (watch the logs) before restarting or changing `.env`; then remove that
+line to get tier-3 pings. If pings are turned on before that first run completes, that
+batch pings.
 
 ## 7. Scheduling and failure
 
@@ -157,8 +159,12 @@ tier-3 pings.
 - **A failed post.** The runner's rollback (base spec §9) covers `rateAlerted` and
   `baselines` the same way it covers `kdAlerted`. A delivered kill-rate alert keeps its cooldown
   stamps. Its retry key is `killRate:{serverId}:{steamId}`.
-- **Pruning.** Before saving, `rateAlerted` entries older than the cooldown are pruned, and
-  `baselines` older than 24 hours.
+- **Saving.** State is saved after each server's processing (after its rollback or clear),
+  not only at the end of a cycle, so a restart part-way through a cycle keeps the cooldowns
+  of alerts already delivered. The first kill-rate run posts every current sweat once, as
+  K/D always has; without this, a restart during that burst would post it again.
+- **Pruning.** Before the final save of a cycle, `rateAlerted` entries older than the
+  cooldown are pruned, and `baselines` older than 24 hours.
 - **Preflight.** Per server, the deploy's preflight reads page 1 of the `SWEAT_RANGE` board
   sorted by `perHour` (with `RATE_MIN_MINUTES`) and fails unless the panel echoes
   `query.sort === 'perHour'`: Warcon silently falls back to another sort for one it doesn't
