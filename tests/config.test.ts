@@ -67,4 +67,13 @@ describe('loadConfig', () => {
       /CF_ACCESS_CLIENT_SECRET/
     );
   });
+
+  test('rejects a PANEL_PUBLIC_URL that is not an absolute http(s) URL', () => {
+    for (const bad of ['panel.example.com', '/relative', 'ftp://panel.example.com', 'javascript:alert(1)']) {
+      expect(() => loadConfig({ ...base, PANEL_PUBLIC_URL: bad })).toThrow(/PANEL_PUBLIC_URL/);
+    }
+    expect(loadConfig({ ...base, PANEL_PUBLIC_URL: 'http://10.0.0.5:3000' }).panelPublicUrl).toBe(
+      'http://10.0.0.5:3000'
+    );
+  });
 });

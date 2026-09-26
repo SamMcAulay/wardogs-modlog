@@ -40,6 +40,15 @@ function parseServerLabels(raw: string): Record<string, string> {
   return labels;
 }
 
+function isHttpUrl(raw: string): boolean {
+  try {
+    const { protocol } = new URL(raw);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const missing: string[] = [];
 
@@ -76,6 +85,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables:\n  ${missing.join('\n  ')}`);
+  }
+
+  // Every embed link is built from this origin, and Discord rejects an embed whose url
+  // is not absolute — a bad value would fail every post, so refuse it at boot.
+  if (!isHttpUrl(panelPublicUrl)) {
+    throw new Error(`PANEL_PUBLIC_URL must be an absolute http(s) URL, got: ${panelPublicUrl}`);
   }
 
   return {
