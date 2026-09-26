@@ -9,7 +9,7 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "preflight": "tsx src/preflight.ts",
     "mock": "node scripts/mock-warcon.mjs"
   },

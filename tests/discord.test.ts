@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { buildMessage, type LinkConfig } from '../src/discord.js';
-import type { Decision } from '../src/events.js';
+import type { Decision, TeamKillEvent } from '../src/events.js';
 
 const links: LinkConfig = {
   panelPublicUrl: 'https://panel.example.com',
@@ -8,7 +8,8 @@ const links: LinkConfig = {
 };
 const ROLE = '999';
 
-const teamKill: Decision = {
+// Typed as the concrete variant so tests can spread and override teamKill fields.
+const teamKill: Decision & { event: TeamKillEvent } = {
   ping: true,
   event: {
     kind: 'teamKill',
