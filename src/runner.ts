@@ -1,4 +1,9 @@
-import { buildMessage, type DiscordPoster, type LinkConfig } from './discord.js';
+import {
+  buildMessage,
+  permanentRejectionStatus,
+  type DiscordPoster,
+  type LinkConfig
+} from './discord.js';
 import { escalate, type EscalateConfig } from './escalate.js';
 import { eventKey, type ModEvent } from './events.js';
 import type { Logger } from './log.js';
@@ -80,6 +85,7 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
     // Only the sources that keep a cursor decide warmth: the K/D board has none, so
     // it failing leaves nothing un-recorded.
     let cursorSourceFailed = false;
+    let anySourceFailed = false;
     const run = async (
       name: string,
       fn: () => Promise<ModEvent[]>,
@@ -90,6 +96,7 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
       } catch (err) {
         // One source failing must not stop the others, or one server the rest.
         deps.logger.warn(`[${serverId}] ${name}: ${err instanceof Error ? err.message : err}`);
+        anySourceFailed = true;
         if (hasCursor) cursorSourceFailed = true;
       }
     };
@@ -131,9 +138,19 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
         delivered.add(key);
         deps.logger.info(`[${serverId}] posted ${eventKey(d.event)}${d.ping ? ' (ping)' : ''}`);
       } catch (err) {
-        deps.logger.error(
-          `[${serverId}] discord post failed: ${err instanceof Error ? err.message : err}`
-        );
+        const message = err instanceof Error ? err.message : String(err);
+        const status = permanentRejectionStatus(err);
+        if (status !== null) {
+          // Discord refused this message itself (e.g. an invalid embed); retrying the
+          // same body can only fail again, and rolling back would block this server
+          // forever. Log it loudly, count it as delivered, and carry on.
+          deps.logger.error(
+            `[${serverId}] discord rejected ${eventKey(d.event)} (HTTP ${status}): ${message} — dropped, not retried`
+          );
+          delivered.add(key);
+          continue;
+        }
+        deps.logger.error(`[${serverId}] discord post failed: ${message}`);
         failed = true;
         break;
       }
@@ -142,10 +159,26 @@ export async function runCycle(deps: CycleDeps): Promise<void> {
     if (failed) {
       deps.state.servers[serverId] = { ...snapshot, postedBeforeFailure: Array.from(delivered) };
       deps.state.kdAlerted = kdSnapshot;
-    } else {
-      // A clean cycle closes out the retry: one-cycle scope only.
+      // The snapshot also erased the cooldowns of K/D alerts that DID go out this
+      // cycle; without them the next K/D run would ping those players again.
+      for (const d of decisions) {
+        if (d.event.kind === 'highKd' && delivered.has(retryKey(d.event))) {
+          deps.state.kdAlerted[d.event.steamId] = deps.now;
+        }
+      }
+    } else if (!anySourceFailed) {
+      // A clean cycle closes out the retry: one-cycle scope only. "Clean" includes
+      // every source: one that threw has not re-read its events yet, and clearing the
+      // list now would let the next cycle post them a second time.
       s.postedBeforeFailure = [];
     }
+  }
+
+  // Cooldowns past their expiry no longer suppress anything; drop them so the state
+  // file does not grow with every player ever flagged.
+  const cooldownMs = deps.escalateConfig.kdCooldownDays * 86_400_000;
+  for (const [steamId, at] of Object.entries(deps.state.kdAlerted)) {
+    if (deps.now - at >= cooldownMs) delete deps.state.kdAlerted[steamId];
   }
 
   await deps.save(deps.state);

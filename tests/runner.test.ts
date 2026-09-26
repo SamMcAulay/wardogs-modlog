@@ -51,6 +51,19 @@ function deps(over: Partial<CycleDeps> = {}): CycleDeps {
   };
 }
 
+const highKd = (steamId: string): ModEvent => ({
+  kind: 'highKd',
+  serverId: 's1',
+  at: '2026-09-24T12:00:00.000Z',
+  steamId,
+  name: steamId === '765' ? 'Alpha' : 'Bravo',
+  kd: 5.2,
+  kills: 52,
+  deaths: 10,
+  matches: 9,
+  minutes: 400
+});
+
 describe('runCycle', () => {
   test('posts an event and saves state', async () => {
     const posted: DiscordMessage[] = [];
@@ -339,33 +352,18 @@ describe('runCycle', () => {
     expect(posted).toHaveLength(2); // the later rejoin posts
   });
 
-  test('the K/D cooldown is set correctly once a retried cycle succeeds', async () => {
+  test('an undelivered K/D alert waits for the next K/D run, then sets its cooldown', async () => {
     const state = warmState();
-    const highKdEvent: ModEvent = {
-      kind: 'highKd',
-      serverId: 's1',
-      at: '2026-09-24T12:00:00.000Z',
-      steamId: '765',
-      name: 'Alpha',
-      kd: 5.2,
-      kills: 52,
-      deaths: 10,
-      matches: 9,
-      minutes: 400
-    };
+    const kd = vi.fn(async () => [highKd('765')]);
+    const sources = { kills: async () => [], audit: async () => [], watchlist: async () => [], kd };
 
     // Cycle 1: the only decision this cycle is the K/D alert, and its post fails — the
-    // cooldown must roll back with it (covered elsewhere), leaving the player unreported.
+    // cooldown must roll back with it, leaving the player unreported.
     await runCycle(
       deps({
         state,
         runKd: true,
-        sources: {
-          kills: async () => [],
-          audit: async () => [],
-          watchlist: async () => [],
-          kd: async () => [highKdEvent]
-        },
+        sources,
         poster: {
           post: async () => {
             throw new Error('discord 500');
@@ -375,23 +373,160 @@ describe('runCycle', () => {
     );
     expect(state.kdAlerted['765']).toBeUndefined();
 
-    // Cycle 2 (the retry): the board still shows the same player over threshold — this
-    // time the post succeeds, and the cooldown must be set for real.
+    // Cycle 2: an ordinary 30-second cycle, the K/D board not due. Nothing is forced:
+    // the alert is not urgent and waits (controller ruling I3).
+    const posted: DiscordMessage[] = [];
+    const poster = { post: async (m: DiscordMessage) => void posted.push(m) };
+    await runCycle(deps({ state, now: NOW + 30_000, runKd: false, sources, poster }));
+    expect(posted).toHaveLength(0);
+    expect(state.kdAlerted['765']).toBeUndefined();
+
+    // Cycle 3: the next hourly K/D run re-flags the player, and this time it posts.
+    await runCycle(deps({ state, now: NOW + 3_600_000, runKd: true, sources, poster }));
+    expect(posted).toHaveLength(1);
+    expect(state.kdAlerted['765']).toBe(NOW + 3_600_000);
+  });
+
+  test('a K/D alert that posted keeps its cooldown when a later post in the cycle fails', async () => {
+    const state = warmState();
+    const kd = async () => [highKd('765'), highKd('766')];
+    const sources = { kills: async () => [], audit: async () => [], watchlist: async () => [], kd };
+
+    const posted: DiscordMessage[] = [];
+    let calls = 0;
     await runCycle(
       deps({
         state,
-        now: NOW + 60_000,
         runKd: true,
-        sources: {
-          kills: async () => [],
-          audit: async () => [],
-          watchlist: async () => [],
-          kd: async () => [highKdEvent]
-        },
-        poster: { post: async () => {} }
+        sources,
+        poster: {
+          post: async (m) => {
+            if (++calls === 2) throw new Error('discord 500'); // 766's alert fails
+            posted.push(m);
+          }
+        }
       })
     );
-    expect(state.kdAlerted['765']).toBe(NOW + 60_000);
+    expect(posted).toHaveLength(1); // 765 was told
+    expect(state.kdAlerted['765']).toBe(NOW); // ...so its cooldown stands
+    expect(state.kdAlerted['766']).toBeUndefined(); // ...and 766's does not
+
+    // The next K/D run, clean: 765 is still cooling down, only 766 posts.
+    posted.length = 0;
+    await runCycle(
+      deps({
+        state,
+        now: NOW + 3_600_000,
+        runKd: true,
+        sources,
+        poster: { post: async (m) => void posted.push(m) }
+      })
+    );
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!.embeds[0]!.title).toContain('Bravo');
+  });
+
+  test('prunes K/D cooldowns that have expired before saving', async () => {
+    const state = warmState();
+    const day = 86_400_000;
+    state.kdAlerted = { expired: NOW - 7 * day, fresh: NOW - 6 * day };
+    await runCycle(deps({ state }));
+    expect(state.kdAlerted).toEqual({ fresh: NOW - 6 * day });
+  });
+
+  test('keeps postedBeforeFailure when a source threw on the retry cycle', async () => {
+    const posted: DiscordMessage[] = [];
+    const state = warmState();
+
+    const audit: CycleDeps['sources']['audit'] = async (_id, s) => {
+      const rows = [5, 6].filter((id) => id > s.lastAuditId);
+      if (rows.length === 0) return [];
+      s.lastAuditId = 6;
+      return rows.map((id) => adminEvent(id));
+    };
+    const auditDown: CycleDeps['sources']['audit'] = async () => {
+      throw new Error('audit 503');
+    };
+
+    let calls = 0;
+    const post = async (m: DiscordMessage) => {
+      if (++calls === 2) throw new Error('discord 500'); // row 6's first attempt
+      posted.push(m);
+    };
+    const sources = (a: CycleDeps['sources']['audit']) => ({
+      kills: async () => [],
+      audit: a,
+      watchlist: async () => [],
+      kd: async () => []
+    });
+
+    await runCycle(deps({ state, sources: sources(audit), poster: { post } }));
+    expect(serverState(state, 's1').postedBeforeFailure).toEqual(['adminAction:5']);
+
+    // Cycle 2: no post fails, but the audit source is down, so row 5 was never re-read.
+    // Clearing the list now would let cycle 3 post row 5 a second time.
+    await runCycle(deps({ state, sources: sources(auditDown), poster: { post } }));
+    expect(serverState(state, 's1').postedBeforeFailure).toEqual(['adminAction:5']);
+
+    // Cycle 3: audit is back; row 5 is skipped, row 6 posts, and the list clears.
+    await runCycle(deps({ state, sources: sources(audit), poster: { post } }));
+    expect(posted.map((m) => m.embeds[0]!.title)).toHaveLength(2);
+    expect(serverState(state, 's1').postedBeforeFailure).toEqual([]);
+  });
+
+  test('a post Discord rejects outright (4xx) is logged and skipped; later posts go out and cursors advance', async () => {
+    const state = warmState();
+    const error = vi.fn();
+    const audit: CycleDeps['sources']['audit'] = async (_id, s) => {
+      s.lastAuditId = 8;
+      return [adminEvent(7), adminEvent(8)];
+    };
+    const posted: DiscordMessage[] = [];
+    let calls = 0;
+    await runCycle(
+      deps({
+        state,
+        logger: { ...silent, error },
+        sources: { kills: async () => [], audit, watchlist: async () => [], kd: async () => [] },
+        poster: {
+          post: async (m) => {
+            if (++calls === 1) {
+              throw Object.assign(new Error('Invalid Form Body'), { status: 400 });
+            }
+            posted.push(m);
+          }
+        }
+      })
+    );
+    expect(posted).toHaveLength(1); // row 8 still posted
+    expect(serverState(state, 's1').lastAuditId).toBe(8); // not rolled back
+    expect(serverState(state, 's1').postedBeforeFailure).toEqual([]);
+    expect(error).toHaveBeenCalledOnce();
+    const [line] = error.mock.calls[0]!;
+    expect(line).toContain('[s1]');
+    expect(line).toContain('adminAction:7');
+    expect(line).toContain('400');
+    expect(line).toContain('Invalid Form Body');
+  });
+
+  test('a rate-limited post (429) still rolls back for a retry', async () => {
+    const state = warmState();
+    const audit: CycleDeps['sources']['audit'] = async (_id, s) => {
+      s.lastAuditId = 7;
+      return [adminEvent(7)];
+    };
+    await runCycle(
+      deps({
+        state,
+        sources: { kills: async () => [], audit, watchlist: async () => [], kd: async () => [] },
+        poster: {
+          post: async () => {
+            throw Object.assign(new Error('You are being rate limited.'), { status: 429 });
+          }
+        }
+      })
+    );
+    expect(serverState(state, 's1').lastAuditId).toBe(0);
   });
 
   test('a cold cycle in which a source failed leaves the server cold, so the backlog is not later reported as new', async () => {

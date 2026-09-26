@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { buildMessage, type LinkConfig } from '../src/discord.js';
+import { DiscordAPIError, HTTPError } from '@discordjs/rest';
+import { buildMessage, permanentRejectionStatus, type LinkConfig } from '../src/discord.js';
 import type { Decision, TeamKillEvent } from '../src/events.js';
 
 const links: LinkConfig = {
@@ -172,5 +173,29 @@ describe('buildMessage', () => {
     };
     const m = buildMessage(long, links, ROLE);
     expect(m.embeds[0]!.title!.length).toBeLessThanOrEqual(256);
+  });
+});
+
+describe('permanentRejectionStatus', () => {
+  const body = { body: undefined, files: undefined };
+
+  test('a Discord API 4xx is permanent', () => {
+    const err = new DiscordAPIError(
+      { code: 50035, message: 'Invalid Form Body' },
+      50035,
+      400,
+      'POST',
+      '/channels/1/messages',
+      body
+    );
+    expect(permanentRejectionStatus(err)).toBe(400);
+    expect(permanentRejectionStatus(new HTTPError(403, 'Forbidden', 'POST', '/x', body))).toBe(403);
+  });
+
+  test('429, 5xx and errors without a status are retryable', () => {
+    expect(permanentRejectionStatus(new HTTPError(429, 'Too Many Requests', 'POST', '/x', body))).toBeNull();
+    expect(permanentRejectionStatus(new HTTPError(502, 'Bad Gateway', 'POST', '/x', body))).toBeNull();
+    expect(permanentRejectionStatus(new Error('fetch failed'))).toBeNull();
+    expect(permanentRejectionStatus('boom')).toBeNull();
   });
 });

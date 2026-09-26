@@ -139,6 +139,21 @@ export function buildMessage(
     : { embeds: [embed], allowed_mentions: { parse: [] } };
 }
 
+/**
+ * The HTTP status of a post Discord rejected permanently — a 4xx other than 429 — or
+ * null for anything worth retrying (429, 5xx, a timeout or network error).
+ *
+ * @discordjs/rest throws `DiscordAPIError` (JSON error body) or `HTTPError` (anything
+ * else), and both carry a numeric `status`; rate-limit and network failures do not.
+ * Read structurally so the poster interface stays free of @discordjs/rest types.
+ */
+export function permanentRejectionStatus(err: unknown): number | null {
+  if (typeof err !== 'object' || err === null || !('status' in err)) return null;
+  const status = (err as { status: unknown }).status;
+  if (typeof status !== 'number') return null;
+  return status >= 400 && status < 500 && status !== 429 ? status : null;
+}
+
 export interface DiscordPoster {
   post(message: DiscordMessage): Promise<void>;
 }
