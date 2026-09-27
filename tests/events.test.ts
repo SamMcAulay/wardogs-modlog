@@ -34,28 +34,34 @@ describe('eventKey', () => {
     ).toBe('adminAction:42');
   });
 
-  test('keys of different kinds never collide', () => {
-    const watched = eventKey({
-      kind: 'watchedJoin',
-      serverId: 's1',
-      at: '2026-09-24T10:00:00.000Z',
-      steamId: '765',
-      name: 'Alpha'
-    });
-    expect(watched).not.toBe(eventKey(teamKill));
-  });
-
-  test('a kill-rate event is keyed by server, player and time', () => {
+  test('a join is keyed by server, player and time', () => {
     expect(
       eventKey({
-        kind: 'killRate',
+        kind: 'playerJoined',
         serverId: 's1',
-        at: '2026-09-24T12:00:00.000Z',
+        at: '2026-09-27T12:00:00.000Z',
         steamId: '765',
         name: 'Alpha',
-        sweat: { perHour: 17, kills: 170, minutes: 600, range: '30d' },
-        surge: null
+        watched: true,
+        sweat: false,
+        highKd: false
       })
-    ).toBe('killRate:s1:765:2026-09-24T12:00:00.000Z');
+    ).toBe('playerJoined:s1:765:2026-09-27T12:00:00.000Z');
+  });
+
+  test('a hot player is keyed by server, player and time', () => {
+    expect(
+      eventKey({
+        kind: 'hotPlayer',
+        serverId: 's1',
+        at: '2026-09-27T12:00:00.000Z',
+        steamId: '765',
+        name: 'Alpha',
+        kills: 12,
+        deaths: 3,
+        minutes: 30,
+        perHour: 24
+      })
+    ).toBe('hotPlayer:s1:765:2026-09-27T12:00:00.000Z');
   });
 });
