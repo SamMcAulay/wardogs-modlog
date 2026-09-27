@@ -3,10 +3,9 @@ import { RestPoster, serverLabel } from './discord.js';
 import { consoleLogger } from './log.js';
 import { runCycle } from './runner.js';
 import { pollAudit } from './sources/audit.js';
-import { pollKd } from './sources/kd.js';
-import { pollKillRate } from './sources/killrate.js';
 import { pollKills } from './sources/kills.js';
-import { pollWatchlist } from './sources/watchlist.js';
+import { pollKnown } from './sources/known.js';
+import { pollPresence } from './sources/presence.js';
 import { loadState, saveState } from './state.js';
 import { WarconClient } from './warcon.js';
 
@@ -52,7 +51,7 @@ async function main(): Promise<void> {
       runKd,
       logger: log,
       escalateConfig: {
-        kdCooldownDays: config.kdCooldownDays,
+        joinAlertHours: config.joinAlertHours,
         pingOn: config.pingOn
       },
       links: { panelPublicUrl: config.panelPublicUrl, serverLabels: config.serverLabels },
@@ -61,32 +60,31 @@ async function main(): Promise<void> {
         kills: (id, s) =>
           pollKills(client, id, s, { feedQuietMinutes: config.feedQuietMinutes, now }),
         audit: (id, s) => pollAudit(client, id, s),
-        watchlist: (id, s) => pollWatchlist(client, id, s, now),
-        kd: (id) =>
-          pollKd(
+        known: (id, s) =>
+          pollKnown(
             client,
             id,
-            {
-              threshold: config.kdThreshold,
-              minMatches: config.kdMinMatches,
-              minMinutes: config.kdMinMinutes,
-              range: config.kdRange
-            },
-            now
-          ),
-        killRate: (id) =>
-          pollKillRate(
-            client,
-            id,
-            state,
+            s,
             {
               sweatPerHour: config.sweatPerHour,
               sweatRange: config.sweatRange,
-              surgeRange: config.surgeRange,
-              surgePerHour: config.surgePerHour,
-              surgeRatio: config.surgeRatio,
-              surgeHistoryMinutes: config.surgeHistoryMinutes,
-              minMinutes: config.rateMinMinutes
+              rateMinMinutes: config.rateMinMinutes,
+              kdThreshold: config.kdThreshold,
+              kdMinMatches: config.kdMinMatches,
+              kdMinMinutes: config.kdMinMinutes,
+              kdRange: config.kdRange
+            },
+            now
+          ),
+        presence: (id, s) =>
+          pollPresence(
+            client,
+            id,
+            s,
+            {
+              livePerHour: config.livePerHour,
+              liveMinMinutes: config.liveMinMinutes,
+              liveMinKills: config.liveMinKills
             },
             now
           )
@@ -97,7 +95,7 @@ async function main(): Promise<void> {
   };
 
   // Self-scheduling rather than setInterval: the next cycle is only queued once this
-  // one has fully settled, so a slow cycle (6 servers x 5 sources, each up to
+  // one has fully settled, so a slow cycle (6 servers x 4 sources, each up to
   // REQUEST_TIMEOUT_MS) can never overlap a still-running one and mutate the shared
   // state object concurrently. Every cycle — including the first — is error-contained
   // identically: log and keep going, never let a transient failure exit the process.

@@ -7,21 +7,22 @@ import {
 import { escalate, type EscalateConfig } from './escalate.js';
 import { eventKey, type ModEvent } from './events.js';
 import type { Logger } from './log.js';
-import { BASELINE_TTL_MS, serverState, type ServerState, type State } from './state.js';
+import { serverState, type ServerState, type State } from './state.js';
 
 export interface CycleSources {
   kills(serverId: string, s: ServerState): Promise<ModEvent[]>;
   audit(serverId: string, s: ServerState): Promise<ModEvent[]>;
-  watchlist(serverId: string, s: ServerState): Promise<ModEvent[]>;
-  kd(serverId: string): Promise<ModEvent[]>;
-  killRate(serverId: string): Promise<ModEvent[]>;
+  /** refreshes the known-player lists on the server entry; returns no events */
+  known(serverId: string, s: ServerState): Promise<ModEvent[]>;
+  /** joins and the live check; owns presentSteamIds and match */
+  presence(serverId: string, s: ServerState): Promise<ModEvent[]>;
 }
 
 export interface CycleDeps {
   serverIds: string[];
   state: State;
   now: number;
-  /** the K/D board runs on its own, slower schedule */
+  /** the known lists refresh on the K/D board's own, slower schedule */
   runKd: boolean;
   logger: Logger;
   escalateConfig: EscalateConfig;
@@ -35,7 +36,7 @@ export interface CycleDeps {
 /**
  * A retry identity for a decision's event — `eventKey` minus the cycle timestamp.
  *
- * `watchedJoin`/`highKd`/`feedQuiet` eventKeys embed `at`, which differs when the same
+ * `playerJoined`/`hotPlayer`/`feedQuiet` eventKeys embed `at`, which differs when the same
  * underlying event is re-read a cycle later (after a rollback). A retry identity must
  * stay the same across that re-read so `postedBeforeFailure` can recognise it.
  */
@@ -45,14 +46,12 @@ export function retryKey(e: ModEvent): string {
       return `teamKill:${e.eventId}`;
     case 'adminAction':
       return `adminAction:${e.auditId}`;
-    case 'watchedJoin':
-      return `watchedJoin:${e.serverId}:${e.steamId}`;
-    case 'highKd':
-      return `highKd:${e.serverId}:${e.steamId}`;
     case 'feedQuiet':
       return `feedQuiet:${e.serverId}`;
-    case 'killRate':
-      return `killRate:${e.serverId}:${e.steamId}`;
+    case 'playerJoined':
+      return `playerJoined:${e.serverId}:${e.steamId}`;
+    case 'hotPlayer':
+      return `hotPlayer:${e.serverId}:${e.steamId}`;
   }
 }
 
@@ -76,23 +75,17 @@ export function retryKey(e: ModEvent): string {
 export async function runCycle(deps: CycleDeps): Promise<void> {
   for (const serverId of deps.serverIds) {
     await runServer(deps, serverId);
-    // Saved per server, not only at the end: a restart part-way through a cycle (a
-    // deploy during the first kill-rate run, which posts every current sweat) must not
-    // lose the cooldowns of alerts already delivered, or the next run posts them again.
+    // Saved per server, not only at the end: a restart part-way through a cycle must
+    // not lose the join stamps and match state of alerts already delivered, or the
+    // next cycle posts them again.
     await deps.save(deps.state);
   }
 
-  // Cooldowns past their expiry no longer suppress anything; drop them so the state
-  // file does not grow with every player ever flagged.
-  const cooldownMs = deps.escalateConfig.kdCooldownDays * 86_400_000;
-  for (const [steamId, at] of Object.entries(deps.state.kdAlerted)) {
-    if (deps.now - at >= cooldownMs) delete deps.state.kdAlerted[steamId];
-  }
-  for (const [key, at] of Object.entries(deps.state.rateAlerted)) {
-    if (deps.now - at >= cooldownMs) delete deps.state.rateAlerted[key];
-  }
-  for (const [key, baseline] of Object.entries(deps.state.baselines)) {
-    if (deps.now - baseline.at >= BASELINE_TTL_MS) delete deps.state.baselines[key];
+  // Join stamps past JOIN_ALERT_HOURS no longer suppress anything; drop them so the
+  // state file does not grow with every player ever tagged.
+  const limitMs = deps.escalateConfig.joinAlertHours * 3_600_000;
+  for (const [steamId, at] of Object.entries(deps.state.joinAlerted)) {
+    if (deps.now - at >= limitMs) delete deps.state.joinAlerted[steamId];
   }
 
   await deps.save(deps.state);
@@ -105,18 +98,17 @@ async function runServer(deps: CycleDeps, serverId: string): Promise<void> {
   // completed a clean cycle — first boot, or a server id newly added to SERVER_IDS —
   // learns where it is and says nothing, so its history is not reported as new.
   const warm = s.warm;
-  // escalate() writes to BOTH the server entry and the global kdAlerted map, so a
-  // failed post has to roll back both — otherwise a K/D alert nobody received still
-  // starts its cooldown and the player goes unreported for days. Snapshotting
-  // kdAlerted per server (not once per cycle) preserves earlier servers' alerts.
+  // escalate() writes to BOTH the server entry and the global joinAlerted map, so a
+  // failed post has to roll back both — otherwise a known-player join nobody received
+  // still starts its once-a-day limit. Snapshotting joinAlerted per server (not once
+  // per cycle) preserves earlier servers' alerts. The server entry includes `match`,
+  // so the same snapshot covers who has been posted as hot this match.
   const snapshot = structuredClone(s);
-  const kdSnapshot = { ...deps.state.kdAlerted };
-  const rateSnapshot = { ...deps.state.rateAlerted };
-  const baselineSnapshot = { ...deps.state.baselines };
+  const joinSnapshot = { ...deps.state.joinAlerted };
 
   const collected: ModEvent[] = [];
-  // Only the sources that keep a cursor decide warmth: the K/D board has none, so
-  // it failing leaves nothing un-recorded.
+  // Only the sources that keep a cursor decide warmth: the known lists have none, so
+  // that source failing leaves nothing un-recorded.
   let cursorSourceFailed = false;
   let anySourceFailed = false;
   const run = async (
@@ -136,9 +128,10 @@ async function runServer(deps: CycleDeps, serverId: string): Promise<void> {
 
   await run('kills', () => deps.sources.kills(serverId, s));
   await run('audit', () => deps.sources.audit(serverId, s));
-  await run('watchlist', () => deps.sources.watchlist(serverId, s));
-  if (deps.runKd) await run('kd', () => deps.sources.kd(serverId), false);
-  if (deps.runKd) await run('killRate', () => deps.sources.killRate(serverId), false);
+  // known before presence, so a freshly refreshed list tags this same cycle's joins
+  // (live-alerts spec §6).
+  if (deps.runKd) await run('known', () => deps.sources.known(serverId, s), false);
+  await run('presence', () => deps.sources.presence(serverId, s));
 
   if (!warm) {
     // A cold cycle in which a cursored source failed must not report that source's
@@ -191,18 +184,28 @@ async function runServer(deps: CycleDeps, serverId: string): Promise<void> {
   }
 
   if (failed) {
-    deps.state.servers[serverId] = { ...snapshot, postedBeforeFailure: Array.from(delivered) };
-    deps.state.kdAlerted = kdSnapshot;
-    deps.state.rateAlerted = rateSnapshot;
-    deps.state.baselines = baselineSnapshot;
-    // The snapshot also erased the cooldowns of alerts that DID go out this cycle;
-    // without them the next run would ping those players again.
+    const restored: ServerState = {
+      ...snapshot,
+      postedBeforeFailure: Array.from(delivered),
+      // The known lists are a cache, not a cursor: nothing is re-read from them on the
+      // retry, and reverting a refresh would only tag the retried joins from a list an
+      // hour older than the one they were first tagged with.
+      knownSweats: s.knownSweats,
+      knownHighKd: s.knownHighKd,
+      knownAt: s.knownAt
+    };
+    deps.state.servers[serverId] = restored;
+    deps.state.joinAlerted = joinSnapshot;
+    // The snapshot also erased the stamps of alerts that DID go out this cycle; without
+    // them the next cycle would tag those joins again, or post a hot player twice in
+    // one match if they are not re-read on the very next cycle.
     for (const d of decisions) {
       if (!delivered.has(retryKey(d.event))) continue;
-      if (d.event.kind === 'highKd') deps.state.kdAlerted[d.event.steamId] = deps.now;
-      if (d.event.kind === 'killRate') {
-        if (d.event.sweat) deps.state.rateAlerted[`sweat:${d.event.steamId}`] = deps.now;
-        if (d.event.surge) deps.state.rateAlerted[`surge:${d.event.steamId}`] = deps.now;
+      if (d.event.kind === 'playerJoined' && (d.event.sweat || d.event.highKd)) {
+        deps.state.joinAlerted[d.event.steamId] = deps.now;
+      }
+      if (d.event.kind === 'hotPlayer' && !restored.match.alerted.includes(d.event.steamId)) {
+        restored.match.alerted.push(d.event.steamId);
       }
     }
   } else if (!anySourceFailed) {
