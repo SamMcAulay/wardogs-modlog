@@ -140,19 +140,18 @@ describe('checkAll', () => {
   });
 });
 
-describe('kill-rate routes', () => {
+describe('sweat-list board', () => {
   const PERHOUR =
     '/api/servers/s1/leaderboard?scope=server&range=30d&sort=perHour&dir=desc&minMinutes=180&page=1';
   const rowA = { steamId: '765', name: 'A', minutes: 600, kills: 150, deaths: 10, matches: 9 };
 
-  /** A panel whose perHour board and dossier answer as given; everything else answers. */
-  const panel = (board: unknown, dossier: unknown = { ok: true, dossier: { perServer: [] } }) => {
+  /** A panel whose perHour board answers as given; everything else answers. */
+  const panel = (board: unknown) => {
     const paths: string[] = [];
     const client = {
       getJson: async (path: string) => {
         paths.push(path);
         if (path === PERHOUR) return board;
-        if (path.startsWith('/api/servers/s1/players/')) return dossier;
         return { ok: true, entries: [], kills: [], rows: [], marks: [], live: null };
       }
     } as never;
@@ -161,16 +160,13 @@ describe('kill-rate routes', () => {
   const find = (results: CheckResult[], name: string): CheckResult | undefined =>
     results.find((r) => r.name === name);
 
-  test('a panel that sorts by perHour and serves the dossier passes both checks', async () => {
-    const { client, paths } = panel(
-      { ok: true, rows: [rowA], query: { sort: 'perHour' } },
-      { ok: true, dossier: { perServer: [{ serverId: 's1', minutes: 6000, kills: 900, deaths: 50 }] } }
-    );
+  test('a panel that sorts by perHour passes, and no dossier is read', async () => {
+    const { client, paths } = panel({ ok: true, rows: [rowA], query: { sort: 'perHour' } });
     const results = await checkAll(client, config as never, okDiscord);
     expect(find(results, 'perHour board (s1)')!.ok).toBe(true);
-    expect(find(results, 'dossier (s1)')!.ok).toBe(true);
     expect(paths).toContain(PERHOUR);
-    expect(paths).toContain('/api/servers/s1/players/765');
+    expect(paths.some((p) => /\/players\/\d+$/.test(p))).toBe(false);
+    expect(results.some((r) => r.name.startsWith('dossier'))).toBe(false);
   });
 
   test('a panel that falls back to another sort fails the perHour check', async () => {
@@ -180,31 +176,58 @@ describe('kill-rate routes', () => {
     expect(board.detail).toContain('kills');
   });
 
-  test('a dossier without perServer fails', async () => {
-    const { client } = panel({ ok: true, rows: [rowA], query: { sort: 'perHour' } }, { ok: true, dossier: {} });
-    const dossier = find(await checkAll(client, config as never, okDiscord), 'dossier (s1)')!;
-    expect(dossier.ok).toBe(false);
-    expect(dossier.detail).toContain('perServer');
-  });
-
-  test('a board with no rows leaves nothing to sample, which is ok', async () => {
-    const { client, paths } = panel({ ok: true, rows: [], query: { sort: 'perHour' } });
-    const results = await checkAll(client, config as never, okDiscord);
-    expect(find(results, 'dossier (s1)')).toMatchObject({ ok: true, detail: 'no rows to sample' });
-    expect(paths.some((p) => p.includes('/players/'))).toBe(false);
-  });
-
-  test('a rejected perHour board is explained, and the dossier check is skipped', async () => {
+  test('a rejected perHour board is explained', async () => {
     const client = {
       getJson: async (path: string) => {
         if (path === PERHOUR) throw new WarconAuthError('warcon auth rejected (403)');
         return { ok: true, entries: [], kills: [], rows: [], marks: [], live: null };
       }
     } as never;
-    const results = await checkAll(client, config as never, okDiscord);
-    const board = find(results, 'perHour board (s1)')!;
+    const board = find(await checkAll(client, config as never, okDiscord), 'perHour board (s1)')!;
     expect(board.ok).toBe(false);
     expect(board.detail).toContain('server.view');
-    expect(find(results, 'dossier (s1)')).toMatchObject({ ok: false, detail: expect.stringContaining('skipped') });
+  });
+});
+
+describe('live-data check', () => {
+  const summaryWith = (matchSeconds: unknown) => ({
+    ok: true,
+    live: { serverId: 's1', ok: true, status: { serverName: 'EU 1', matchSeconds }, players: [] }
+  });
+  const run = async (summary: () => unknown) => {
+    const client = {
+      getJson: async (path: string) => {
+        if (path.endsWith('/summary')) return summary();
+        return { ok: true, entries: [], kills: [], rows: [], marks: [], query: { sort: 'perHour' } };
+      }
+    } as never;
+    const results = await checkAll(client, config as never, okDiscord);
+    return results.find((r) => r.name === 'live data (s1)');
+  };
+
+  test('reads ok and active when the summary carries a match clock', async () => {
+    expect(await run(() => summaryWith(754))).toEqual({
+      name: 'live data (s1)',
+      ok: true,
+      detail: 'live check active'
+    });
+  });
+
+  test('reads ok but inactive when there is no match clock', async () => {
+    const inactive = {
+      name: 'live data (s1)',
+      ok: true,
+      detail: 'no match clock — live alerts inactive until the server reports one'
+    };
+    expect(await run(() => summaryWith(null))).toEqual(inactive);
+    expect(await run(() => ({ ok: true, live: null }))).toEqual(inactive);
+    expect(await run(() => summaryWith(undefined))).toEqual(inactive);
+  });
+
+  test('never fails the deploy, even when the summary itself did not answer', async () => {
+    const check = await run(() => {
+      throw new Error('summary 500');
+    });
+    expect(check).toMatchObject({ ok: true, detail: expect.stringContaining('skipped') });
   });
 });

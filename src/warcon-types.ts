@@ -106,17 +106,3 @@ export interface BoardBody {
   /** the query Warcon actually ran; it falls back to another sort for one it doesn't know */
   query?: { sort?: string };
 }
-
-/** One server's all-time totals from a player's dossier (tiered-alerts spec §4). */
-export interface DossierServerTotals {
-  serverId: string;
-  minutes: number;
-  kills: number;
-  deaths: number;
-}
-
-/** `GET /api/servers/{id}/players/{steamId}` — only the fields the bot reads. */
-export interface DossierBody {
-  ok: boolean;
-  dossier: { perServer: DossierServerTotals[] };
-}
