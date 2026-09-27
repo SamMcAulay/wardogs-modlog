@@ -2,10 +2,10 @@ import type { Decision, ModEvent } from './events.js';
 import { serverState, type State } from './state.js';
 
 /**
- * The alert kinds that can mention the mod role: tier 3 only (tiered-alerts spec §2, §6).
- * Everything else posts without a ping.
+ * The alert kinds that can mention the mod role: only the live "hot right now" alert
+ * (live-alerts spec §7). Everything else posts without a ping.
  */
-export const PING_KINDS = ['sweat', 'surge'] as const;
+export const PING_KINDS = ['live'] as const;
 export type PingKind = (typeof PING_KINDS)[number];
 
 export interface EscalateConfig {
