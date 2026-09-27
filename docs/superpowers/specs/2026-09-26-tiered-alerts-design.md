@@ -1,5 +1,7 @@
 # Tiered alerts: sweats and surges
 
+> Superseded where they disagree by `2026-09-27-live-alerts-design.md` (live alerts).
+
 Date: 2026-09-26. Amends `2026-09-24-wardogs-modlog-design.md` (the base spec): §8 rules and
 pings, §10 configuration, §11 testing. Where the two disagree, this document wins.
 
