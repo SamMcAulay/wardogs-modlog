@@ -63,6 +63,17 @@ export interface SummaryPlayer {
   name: string;
   steamId: string;
   faction: string | null;
+  /** the current match's scoreboard */
+  kills: number;
+  deaths: number;
+  cash: number;
+  ping: number;
+}
+
+export interface SummaryStatus {
+  serverName: string;
+  /** the match clock in seconds; null on an idle server or a build that doesn't report it */
+  matchSeconds: number | null;
 }
 
 export interface SummaryBody {
@@ -70,7 +81,7 @@ export interface SummaryBody {
   live: {
     serverId: string;
     ok: boolean;
-    status: { serverName: string } | null;
+    status: SummaryStatus | null;
     players: SummaryPlayer[];
   } | null;
 }
