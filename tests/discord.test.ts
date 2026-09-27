@@ -60,13 +60,16 @@ describe('buildMessage', () => {
     const text = JSON.stringify(
       buildMessage(
         {
-          ping: true,
+          ping: false,
           event: {
-            kind: 'watchedJoin',
+            kind: 'playerJoined',
             serverId: 's1',
             at: '2026-09-24T12:00:00.000Z',
             steamId: '765',
-            name: 'Alpha'
+            name: 'Alpha',
+            watched: true,
+            sweat: false,
+            highKd: false
           }
         },
         links,
@@ -176,88 +179,96 @@ describe('buildMessage', () => {
   });
 });
 
-describe('kill-rate embed', () => {
-  const base = {
-    kind: 'killRate' as const,
-    serverId: 's1',
-    at: '2026-09-24T12:00:00.000Z',
-    steamId: '765',
-    name: 'Alpha'
-  };
-  const sweat = { perHour: 17.04, kills: 170, minutes: 600, range: '30d' };
-  const surge = { perHour: 21, minutes: 300, usualPerHour: 12, usualMinutes: 6000, ratio: 1.75, range: '7d' };
+describe('join embed', () => {
+  const join = (tags: { watched?: boolean; sweat?: boolean; highKd?: boolean }) =>
+    buildMessage(
+      {
+        ping: false,
+        event: {
+          kind: 'playerJoined',
+          serverId: 's1',
+          at: '2026-09-27T12:00:00.000Z',
+          steamId: '765',
+          name: 'Alpha',
+          watched: false,
+          sweat: false,
+          highKd: false,
+          ...tags
+        }
+      },
+      links,
+      ROLE
+    ).embeds[0]!;
+  const tagsOf = (e: ReturnType<typeof join>) => e.fields!.find((f) => f.name === 'Tags')!.value;
 
-  test('a sweat alone is titled Sweat and shows its rate and playtime', () => {
-    const m = buildMessage({ event: { ...base, sweat, surge: null }, ping: true }, links, ROLE);
-    const e = m.embeds[0]!;
-    expect(e.title).toBe('NA#3 · Sweat — Alpha');
-    expect(e.fields).toContainEqual({ name: 'Kills/hour (30d)', value: '17.0', inline: true });
-    expect(e.fields).toContainEqual({ name: 'Playtime (30d)', value: '10.0 h', inline: true });
+  test('watched only: tier 1, blue, with the dossier hint', () => {
+    const e = join({ watched: true });
+    expect(e.title).toBe('NA#3 · Joined — Alpha');
+    expect(tagsOf(e)).toBe('watched');
+    expect(e.color).toBe(0x3498db);
+    expect(e.footer).toEqual({ text: 'Tier 1 · watchlist' });
+    expect(e.description).toBe('Open the dossier for the watch reason.');
     expect(e.url).toBe('https://panel.example.com/server/s1/players/765');
   });
 
-  test('both parts are titled Sweat + surge and show the ratio', () => {
-    const m = buildMessage({ event: { ...base, sweat, surge }, ping: true }, links, ROLE);
-    const e = m.embeds[0]!;
-    expect(e.title).toBe('NA#3 · Sweat + surge — Alpha');
-    expect(e.fields).toContainEqual({ name: 'Vs usual', value: '1.8×', inline: true });
-    expect(e.fields).toContainEqual({ name: 'Usual kills/hour', value: '12.0 over 100.0 h', inline: true });
-    expect(e.fields).toContainEqual({ name: 'Recent kills/hour (7d)', value: '21.0', inline: true });
+  test.each([
+    [{ sweat: true }, 'sweat'],
+    [{ highKd: true }, 'high K/D'],
+    [{ sweat: true, highKd: true }, 'sweat · high K/D'],
+    [{ watched: true, sweat: true }, 'watched · sweat'],
+    [{ watched: true, highKd: true }, 'watched · high K/D'],
+    [{ watched: true, sweat: true, highKd: true }, 'watched · sweat · high K/D']
+  ])('any known tag %o: tier 2, orange, tags "%s"', (tags, text) => {
+    const e = join(tags);
+    expect(e.title).toBe('NA#3 · Joined — Alpha');
+    expect(tagsOf(e)).toBe(text);
+    expect(e.color).toBe(0xe67e22);
+    expect(e.footer).toEqual({ text: 'Tier 2 · known player' });
+    expect(e.url).toBe('https://panel.example.com/server/s1/players/765');
   });
 
-  test('sweat and surge rate fields keep distinct names when both use the same range', () => {
-    const m = buildMessage(
-      { event: { ...base, sweat, surge: { ...surge, range: '30d' } }, ping: true },
-      links,
-      ROLE
-    );
-    const names = m.embeds[0]!.fields!.map((f) => f.name);
-    expect(names).toContain('Kills/hour (30d)');
-    expect(names).toContain('Recent kills/hour (30d)');
-    expect(new Set(names).size).toBe(names.length);
-  });
-
-  test('an infinite ratio reads as new', () => {
-    const m = buildMessage(
-      { event: { ...base, sweat: null, surge: { ...surge, usualPerHour: 0, ratio: Infinity } }, ping: true },
-      links,
-      ROLE
-    );
-    expect(m.embeds[0]!.title).toBe('NA#3 · Surge — Alpha');
-    expect(m.embeds[0]!.fields).toContainEqual({ name: 'Vs usual', value: 'new', inline: true });
+  test('a known join without the watched tag carries no watch-reason hint', () => {
+    expect(join({ sweat: true }).description).toBeUndefined();
+    expect(join({ watched: true, sweat: true }).description).toBe('Open the dossier for the watch reason.');
   });
 });
 
-describe('tiers', () => {
+describe('hot embed', () => {
+  const hot: Decision = {
+    ping: true,
+    event: {
+      kind: 'hotPlayer',
+      serverId: 's1',
+      at: '2026-09-27T12:00:00.000Z',
+      steamId: '765',
+      name: 'Alpha',
+      kills: 14,
+      deaths: 3,
+      minutes: 32.5,
+      perHour: 25.846
+    }
+  };
+
+  test('tier 3, red, titled Hot right now, with the match figures', () => {
+    const m = buildMessage(hot, links, ROLE);
+    const e = m.embeds[0]!;
+    expect(e.title).toBe('NA#3 · Hot right now — Alpha');
+    expect(e.color).toBe(0xe74c3c);
+    expect(e.footer).toEqual({ text: 'Tier 3 · hot right now' });
+    expect(e.url).toBe('https://panel.example.com/server/s1/players/765');
+    expect(e.fields).toEqual([
+      { name: 'Kills / deaths', value: '14 / 3', inline: true },
+      { name: 'Minutes this match', value: '33', inline: true },
+      { name: 'Kills/hour', value: '25.8', inline: true }
+    ]);
+    expect(m.content).toBe(`<@&${ROLE}> **NA#3**`);
+  });
+});
+
+describe('untiered', () => {
   const at = '2026-09-24T12:00:00.000Z';
   const msg = (event: import('../src/events.js').ModEvent) =>
     buildMessage({ event, ping: false }, links, ROLE).embeds[0]!;
-
-  test('a watched join is tier 1, blue', () => {
-    const e = msg({ kind: 'watchedJoin', serverId: 's1', at, steamId: '9', name: 'W' });
-    expect(e.color).toBe(0x3498db);
-    expect(e.footer).toEqual({ text: 'Tier 1 · watchlist' });
-  });
-
-  test('a K/D flag is tier 2, orange', () => {
-    const e = msg({
-      kind: 'highKd', serverId: 's1', at, steamId: '9', name: 'K',
-      kd: 5, kills: 50, deaths: 10, matches: 9, minutes: 400
-    });
-    expect(e.color).toBe(0xe67e22);
-    expect(e.footer).toEqual({ text: 'Tier 2 · high K/D' });
-  });
-
-  test('kill-rate alerts are tier 3, red, and name their parts', () => {
-    const sweat = { perHour: 17, kills: 170, minutes: 600, range: '30d' };
-    const surge = { perHour: 21, minutes: 300, usualPerHour: 12, usualMinutes: 6000, ratio: 1.75, range: '7d' };
-    const base = { kind: 'killRate' as const, serverId: 's1', at, steamId: '9', name: 'R' };
-    expect(msg({ ...base, sweat, surge: null }).footer).toEqual({ text: 'Tier 3 · sweat' });
-    expect(msg({ ...base, sweat: null, surge }).footer).toEqual({ text: 'Tier 3 · surge' });
-    const both = msg({ ...base, sweat, surge });
-    expect(both.footer).toEqual({ text: 'Tier 3 · sweat + surge' });
-    expect(both.color).toBe(0xe74c3c);
-  });
 
   test('untiered alerts have no footer, and a team kill is purple', () => {
     const tkEmbed = msg({
