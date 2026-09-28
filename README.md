@@ -59,8 +59,8 @@ Mint a **second** Warcon org API key, separate from the status fleet's, scoped t
 `server.view` + `audit.read` only, and tick it against every server in the
 organisation.
 
-**Do not tick Raw RCON or Automation.** Raw RCON lets the holder call kick, kill, ban
-and broadcast directly against a game server — this bot only reads. Automation is a
+**Do not tick Raw RCON or Automation.** Raw RCON lets the holder send any console
+command straight to a game server — this bot never needs it. Automation is a
 write capability: a key holding it can delete the `team_kill` trigger, or create one
 that kicks players outright. Neither is needed for anything this bot does; excluding
 both means a leaked modlog token cannot touch a game server or its triggers.
