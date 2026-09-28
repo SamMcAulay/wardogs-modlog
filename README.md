@@ -69,6 +69,31 @@ Without `audit.read`, kicks and bans silently read as zero rows rather than an e
 `npm run preflight` (below) exists partly to catch a key missing that capability
 before it goes unnoticed.
 
+**For the Kick button**, also tick **Kick, kill, move** (`players.moderate`) on the same
+servers. Without it the bot still posts every alert, and pressing Kick just replies that the
+key isn't allowed to kick. The capability also covers kill and change-team, which this bot
+never calls. It is the one write capability the key holds, and it can only act on players
+already on a server.
+
+## The Kick button
+
+Alerts about one player carry a red **Kick** button: joins, hot players, and team kills (it
+kicks the killer). Kicks, bans and feed warnings don't.
+
+- **Who can press it:** only members holding `DISCORD_MOD_ROLE_ID`, the same role the
+  alerts ping. Anyone else gets a private "only @role can kick" reply.
+- **Confirming:** pressing it opens a confirmation, shown only to the presser, with an
+  optional reason. Nothing happens until **Submit**, so a misclick is harmless.
+- **What the player sees:** the typed reason, or "Kicked by a moderator". The mod's name
+  is not sent to the game.
+- **What staff see:** the button becomes a disabled **Kicked by <mod>** label, and a line
+  in the channel records who kicked whom, from which server, and why. Warcon's own audit
+  trail shows the kick as made by the modlog API key, so the admin log may post it too.
+
+The buttons need a live connection to Discord. The bot now holds one (Guilds intent only,
+no privileged intents), which is also why it shows as online. If that connection can't be
+made, alerts still post and only the buttons stop working; the log says so.
+
 ## Setup
 
 ```bash

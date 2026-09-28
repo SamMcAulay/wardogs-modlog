@@ -99,3 +99,60 @@ describe('WarconClient', () => {
     await expect(client.getJson('/api/thing')).rejects.toThrow(/503/);
   });
 });
+
+describe('WarconClient.postAction', () => {
+  test('POSTs JSON with the bearer token and reports success', async () => {
+    let seen: Request | null = null;
+    const client = new WarconClient({
+      ...opts,
+      fetchImpl: async (url, init) => {
+        seen = new Request(url as string, init);
+        return reply({ ok: true, action: 'kick' });
+      }
+    });
+    const result = await client.postAction('/api/servers/s1/rcon/kick', { steamId: '765', reason: 'r' });
+    expect(result).toEqual({ ok: true });
+    expect(seen!.method).toBe('POST');
+    expect(seen!.headers.get('authorization')).toBe('Bearer tok');
+    expect(seen!.headers.get('content-type')).toBe('application/json');
+    expect(await seen!.json()).toEqual({ steamId: '765', reason: 'r' });
+  });
+
+  test("a refusal resolves with Warcon's own message and status rather than throwing", async () => {
+    const client = new WarconClient({
+      ...opts,
+      fetchImpl: async () => reply({ ok: false, error: { message: 'Player is not on the server.' } }, { status: 404 })
+    });
+    expect(await client.postAction('/api/servers/s1/rcon/kick', {})).toEqual({
+      ok: false,
+      status: 404,
+      message: 'Player is not on the server.'
+    });
+  });
+
+  test('a refusal without a JSON body still says what failed', async () => {
+    const client = new WarconClient({
+      ...opts,
+      fetchImpl: async () => new Response('<html>oops</html>', { status: 502, headers: { 'content-type': 'text/html' } })
+    });
+    expect(await client.postAction('/api/servers/s1/rcon/kick', {})).toEqual({
+      ok: false,
+      status: 502,
+      message: 'warcon request failed (502)'
+    });
+  });
+
+  test('a network failure resolves as a failure, not a throw', async () => {
+    const client = new WarconClient({
+      ...opts,
+      fetchImpl: async () => {
+        throw new TypeError('fetch failed');
+      }
+    });
+    expect(await client.postAction('/api/servers/s1/rcon/kick', {})).toEqual({
+      ok: false,
+      status: 0,
+      message: 'fetch failed'
+    });
+  });
+});

@@ -356,3 +356,35 @@ describe('join embed stats', () => {
     expect(e.fields!.map((f) => f.name)).not.toContain('Kills/hour (30d)');
   });
 });
+
+describe('the Kick button', () => {
+  const at = '2026-09-27T12:00:00.000Z';
+  const msg = (event: import('../src/events.js').ModEvent) => buildMessage({ event, ping: false }, links, ROLE);
+  const buttonId = (m: ReturnType<typeof msg>) => m.components?.[0]?.components[0]?.custom_id;
+
+  test('a join, a hot player and a team kill each carry a Kick button for that player', () => {
+    expect(
+      buttonId(msg({ kind: 'playerJoined', serverId: 's1', at, steamId: '76561198000000001', name: 'A', watched: true, sweat: false, highKd: false }))
+    ).toBe('kick:s1:76561198000000001');
+    expect(
+      buttonId(msg({ kind: 'hotPlayer', serverId: 's1', at, steamId: '76561198000000002', name: 'B', kills: 10, deaths: 1, minutes: 20, perHour: 30 }))
+    ).toBe('kick:s1:76561198000000002');
+    expect(
+      buttonId(
+        msg({
+          kind: 'teamKill', serverId: 's1', at, eventId: 'e', eventTime: 1,
+          killer: { steamId: '76561198000000003', name: 'K', faction: 'V' },
+          victim: { steamId: '76561198000000004', name: 'V', faction: 'V' },
+          cause: null, distanceM: null, count: 1
+        })
+      )
+    ).toBe('kick:s1:76561198000000003'); // the killer, not the victim
+  });
+
+  test('kicks, bans and feed warnings carry no button', () => {
+    expect(
+      msg({ kind: 'adminAction', serverId: 's1', at, auditId: 1, action: 'rcon.ban', actorName: 'm', target: '765', reason: '' }).components
+    ).toBeUndefined();
+    expect(msg({ kind: 'feedQuiet', serverId: 's1', at, lastFeedAt: null }).components).toBeUndefined();
+  });
+});

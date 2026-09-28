@@ -1,6 +1,7 @@
 import { REST } from '@discordjs/rest';
 import { Routes } from 'discord-api-types/v10';
 import type { Decision, ModEvent, PlayerJoinedEvent } from './events.js';
+import { kickRow, type ActionRow, type ButtonComponent } from './kick.js';
 
 export interface LinkConfig {
   /** the origin a mod's browser opens — never WARCON_BASE_URL */
@@ -33,6 +34,22 @@ export interface DiscordMessage {
   content?: string;
   embeds: Embed[];
   allowed_mentions: { parse: []; roles?: string[] };
+  /** the Kick button, on alerts about one player who may be on the server */
+  components?: ActionRow<ButtonComponent>[];
+}
+
+/** The player a Kick button would act on, or null for alerts that aren't about one. */
+function kickTarget(e: ModEvent): string | null {
+  switch (e.kind) {
+    case 'playerJoined':
+    case 'hotPlayer':
+      return e.steamId;
+    case 'teamKill':
+      return e.killer.steamId;
+    case 'adminAction':
+    case 'feedQuiet':
+      return null;
+  }
 }
 
 /** Tier colours (live-alerts spec §2); untiered alerts keep their own. */
@@ -169,13 +186,16 @@ export function buildMessage(
   const embed = embedFor(d.event, links);
   const label = serverLabel(d.event.serverId, links.serverLabels);
   embed.title = clamp(`${label} · ${embed.title ?? ''}`, 256);
+  const target = kickTarget(d.event);
+  const components = target ? { components: [kickRow(d.event.serverId, target)] } : {};
   return d.ping
     ? {
         content: `<@&${modRoleId}> **${label}**`,
         embeds: [embed],
-        allowed_mentions: { parse: [], roles: [modRoleId] }
+        allowed_mentions: { parse: [], roles: [modRoleId] },
+        ...components
       }
-    : { embeds: [embed], allowed_mentions: { parse: [] } };
+    : { embeds: [embed], allowed_mentions: { parse: [] }, ...components };
 }
 
 /**
