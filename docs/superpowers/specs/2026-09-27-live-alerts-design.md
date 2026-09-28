@@ -162,6 +162,11 @@ interface HotPlayerEvent {
 **Embeds:**
 
 - **playerJoined:** titled `Joined — {name}`, with a `Tags` field (e.g. `watched · sweat`).
+  For each known tag it still carries (amended 2026-09-28), it also shows the numbers that put
+  the player on that list, from the last refresh. A sweat shows `Kills/hour` and `Playtime`
+  over `SWEAT_RANGE`. A high K/D shows `K/D`, `Kills / deaths` and `Matches` over `KD_RANGE`.
+  A tag the daily limit dropped shows no numbers. The lists keep these as `knownStats` on the
+  server entry, refreshed with them.
   - Watched only: tier 1, blue, footer `Tier 1 · watchlist`, and the existing dossier hint.
   - Any known tag: tier 2, orange, footer `Tier 2 · known player`.
 - **hotPlayer:** titled `Hot right now — {name}`, with fields `Kills / deaths`,

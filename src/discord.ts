@@ -1,6 +1,6 @@
 import { REST } from '@discordjs/rest';
 import { Routes } from 'discord-api-types/v10';
-import type { Decision, ModEvent } from './events.js';
+import type { Decision, ModEvent, PlayerJoinedEvent } from './events.js';
 
 export interface LinkConfig {
   /** the origin a mod's browser opens — never WARCON_BASE_URL */
@@ -66,6 +66,29 @@ export function joinTags(e: { watched: boolean; sweat: boolean; highKd: boolean 
   return tags.join(' · ');
 }
 
+/** 600 -> `10.0 h` */
+const hours = (minutes: number): string => `${(minutes / 60).toFixed(1)} h`;
+
+/**
+ * The numbers behind a known player's tags. Keyed off the tag, not the stats: when the
+ * daily limit drops a tag, its numbers must not show on their own.
+ */
+function joinStatFields(e: PlayerJoinedEvent): EmbedField[] {
+  const out: EmbedField[] = [];
+  if (e.sweat && e.sweatStats) {
+    const s = e.sweatStats;
+    out.push(field(`Kills/hour (${s.range})`, s.perHour.toFixed(1)));
+    out.push(field(`Playtime (${s.range})`, hours(s.minutes)));
+  }
+  if (e.highKd && e.highKdStats) {
+    const k = e.highKdStats;
+    out.push(field(`K/D (${k.range})`, k.kd.toFixed(2)));
+    out.push(field(`Kills / deaths (${k.range})`, `${k.kills} / ${k.deaths}`));
+    out.push(field(`Matches (${k.range})`, String(k.matches)));
+  }
+  return out;
+}
+
 function embedFor(e: ModEvent, links: LinkConfig): Embed {
   const base = `${links.panelPublicUrl}/server/${encodeURIComponent(e.serverId)}`;
 
@@ -117,7 +140,7 @@ function embedFor(e: ModEvent, links: LinkConfig): Embed {
         timestamp: e.at,
         // The reason needs players.notes, which this key does not hold (spec §5.3).
         ...(e.watched ? { description: 'Open the dossier for the watch reason.' } : {}),
-        fields: [field('Tags', joinTags(e)), field('Steam ID', e.steamId)],
+        fields: [field('Tags', joinTags(e)), ...joinStatFields(e), field('Steam ID', e.steamId)],
         footer: { text: known ? 'Tier 2 · known player' : 'Tier 1 · watchlist' }
       };
     }

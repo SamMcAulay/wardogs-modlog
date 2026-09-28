@@ -1,5 +1,6 @@
 import { readFile, rename, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import type { KdStats, SweatStats } from './events.js';
 
 /** Per-server ring of recently seen kill event ids (spec §7). */
 export const SEEN_KILL_CAP = 500;
@@ -56,6 +57,9 @@ export interface ServerState {
   knownSweats: string[];
   /** steamIds over the K/D line, refreshed with knownSweats */
   knownHighKd: string[];
+  /** steamId -> the numbers that put them on either list, refreshed with both, so a join
+   *  alert can show them */
+  knownStats: Record<string, { sweat?: SweatStats; highKd?: KdStats }>;
   /** epoch ms of the last successful refresh of both lists, or null if never */
   knownAt: number | null;
 }
@@ -84,6 +88,7 @@ export function emptyServerState(): ServerState {
     match: emptyMatch(),
     knownSweats: [],
     knownHighKd: [],
+    knownStats: {},
     knownAt: null
   };
 }

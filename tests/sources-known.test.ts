@@ -77,6 +77,32 @@ describe('pollKnown', () => {
     ]);
   });
 
+  test("keeps each listed player's numbers, so a join can show them", async () => {
+    const { s } = await refresh({
+      sweat: [{ ...rateRow('a', 18, 600), seedMinutes: 0 }],
+      kd: [kdRow('k', { kills: 52, deaths: 10, matches: 9 })]
+    });
+    expect(s.knownStats).toEqual({
+      a: { sweat: { perHour: 18, kills: 180, minutes: 600, range: '30d' } },
+      k: { highKd: { kd: 5.2, kills: 52, deaths: 10, matches: 9, range: '30d' } }
+    });
+  });
+
+  test('a player on both lists keeps both sets of numbers', async () => {
+    const { s } = await refresh({
+      sweat: [rateRow('d', 20, 600)],
+      kd: [kdRow('d', { kills: 200, deaths: 40, matches: 12 })]
+    });
+    expect(Object.keys(s.knownStats['d']!).sort()).toEqual(['highKd', 'sweat']);
+  });
+
+  test('a failed refresh keeps the old numbers too', async () => {
+    const s = emptyServerState();
+    s.knownStats = { old: { sweat: { perHour: 16, kills: 160, minutes: 600, range: '30d' } } };
+    await expect(refresh({ fail: 'kd' }, s)).rejects.toThrow('kd board down');
+    expect(Object.keys(s.knownStats)).toEqual(['old']);
+  });
+
   test('replaces the old lists rather than adding to them', async () => {
     const s = { ...emptyServerState(), knownSweats: ['gone'], knownHighKd: ['gone'], knownAt: 1 };
     await refresh({ sweat: [rateRow('a', 20)], kd: [] }, s);

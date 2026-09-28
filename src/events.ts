@@ -54,6 +54,27 @@ export interface PlayerJoinedEvent {
   watched: boolean;
   sweat: boolean;
   highKd: boolean;
+  /** the numbers that put them on the sweat list, from its last refresh */
+  sweatStats?: SweatStats;
+  /** the numbers that put them on the high-K/D list, from its last refresh */
+  highKdStats?: KdStats;
+}
+
+/** A known sweat's record over SWEAT_RANGE. `perHour` leaves seeding out, as the panel does. */
+export interface SweatStats {
+  perHour: number;
+  kills: number;
+  minutes: number;
+  range: string;
+}
+
+/** A known high K/D's record over KD_RANGE. */
+export interface KdStats {
+  kd: number;
+  kills: number;
+  deaths: number;
+  matches: number;
+  range: string;
 }
 
 /** Tier 3: a high kill rate in the current match (live-alerts spec §3). */

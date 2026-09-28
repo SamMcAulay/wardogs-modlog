@@ -306,3 +306,53 @@ describe('permanentRejectionStatus', () => {
     expect(permanentRejectionStatus('boom')).toBeNull();
   });
 });
+
+describe('join embed stats', () => {
+  const sweatStats = { perHour: 17.96, kills: 180, minutes: 601, range: '30d' };
+  const highKdStats = { kd: 5.2, kills: 52, deaths: 10, matches: 9, range: '30d' };
+  const embed = (over: Partial<import('../src/events.js').PlayerJoinedEvent>) =>
+    buildMessage(
+      {
+        ping: false,
+        event: {
+          kind: 'playerJoined',
+          serverId: 's1',
+          at: '2026-09-27T12:00:00.000Z',
+          steamId: '765',
+          name: 'Alpha',
+          watched: false,
+          sweat: false,
+          highKd: false,
+          ...over
+        }
+      },
+      links,
+      ROLE
+    ).embeds[0]!;
+
+  test("a known sweat's join shows their 30-day rate and playtime", () => {
+    const e = embed({ sweat: true, sweatStats });
+    expect(e.fields).toContainEqual({ name: 'Kills/hour (30d)', value: '18.0', inline: true });
+    expect(e.fields).toContainEqual({ name: 'Playtime (30d)', value: '10.0 h', inline: true });
+  });
+
+  test("a known high K/D's join shows their K/D, kills and deaths, and matches", () => {
+    const e = embed({ highKd: true, highKdStats });
+    expect(e.fields).toContainEqual({ name: 'K/D (30d)', value: '5.20', inline: true });
+    expect(e.fields).toContainEqual({ name: 'Kills / deaths (30d)', value: '52 / 10', inline: true });
+    expect(e.fields).toContainEqual({ name: 'Matches (30d)', value: '9', inline: true });
+  });
+
+  test('both sets show on one embed, and the tags stay as the summary line', () => {
+    const e = embed({ sweat: true, highKd: true, sweatStats, highKdStats });
+    const names = e.fields!.map((f) => f.name);
+    expect(names[0]).toBe('Tags');
+    expect(names).toEqual(expect.arrayContaining(['Kills/hour (30d)', 'K/D (30d)']));
+  });
+
+  test('a tag dropped by the daily limit shows no numbers for it', () => {
+    // escalate() clears sweat when it is still quiet; the stats alone must not show.
+    const e = embed({ watched: true, sweat: false, sweatStats });
+    expect(e.fields!.map((f) => f.name)).not.toContain('Kills/hour (30d)');
+  });
+});

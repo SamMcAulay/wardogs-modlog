@@ -16,7 +16,7 @@ lists refresh hourly), plus a feed-health warning:
 | Tier | Alert | When | Colour | Pings the mod role? |
 | --- | --- | --- | --- | --- |
 | 1 | **Watched player joined** | on connect, every time | blue | no |
-| 2 | **Known sweat / high K/D joined** | on connect, at most once per `JOIN_ALERT_HOURS` per player | orange | no |
+| 2 | **Known sweat / high K/D joined**, with their 30-day kills/hour and playtime, or K/D, kills/deaths and matches | on connect, at most once per `JOIN_ALERT_HOURS` per player | orange | no |
 | 3 | **Hot right now**: `LIVE_PER_HOUR`+ kills an hour this match, over at least `LIVE_MIN_MINUTES` and `LIVE_MIN_KILLS` | during a match, once per player per match | red | yes, unless `PING_ON=none` |
 | — | Team kill (with the killer's running count this match) | | purple | no |
 | — | Kick, ban, unban by an admin | | grey | no |

@@ -89,7 +89,18 @@ async function joinEvents(
         highKd: highKd.has(p.steamId)
       };
       if (!tags.watched && !tags.sweat && !tags.highKd) continue;
-      events.push({ kind: 'playerJoined', serverId, at, steamId: p.steamId, name: p.name, ...tags });
+      // The numbers that put them on each list, for the embed. Only for a tag they carry.
+      const known = s.knownStats[p.steamId];
+      events.push({
+        kind: 'playerJoined',
+        serverId,
+        at,
+        steamId: p.steamId,
+        name: p.name,
+        ...tags,
+        ...(tags.sweat && known?.sweat ? { sweatStats: known.sweat } : {}),
+        ...(tags.highKd && known?.highKd ? { highKdStats: known.highKd } : {})
+      });
     }
   }
   return events;
