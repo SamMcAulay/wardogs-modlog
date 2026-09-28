@@ -81,7 +81,8 @@ async function joinEvents(
       names: batch.map((p) => p.name).join('\n')
     });
     const body = await client.getJson<MarksBody>(`/api/servers/${id}/players/marks?${query}`);
-    const watched = new Set(body.marks.filter((m) => m.watched).map((m) => m.steamId));
+    // steamId -> watch reason ('' when none is recorded, or the key can't read it)
+    const watched = new Map(body.marks.filter((m) => m.watched).map((m) => [m.steamId, m.reason ?? '']));
     for (const p of batch) {
       const tags = {
         watched: watched.has(p.steamId),
@@ -98,6 +99,7 @@ async function joinEvents(
         steamId: p.steamId,
         name: p.name,
         ...tags,
+        ...(watched.get(p.steamId) ? { watchReason: watched.get(p.steamId) } : {}),
         ...(tags.sweat && known?.sweat ? { sweatStats: known.sweat } : {}),
         ...(tags.highKd && known?.highKd ? { highKdStats: known.highKd } : {})
       });

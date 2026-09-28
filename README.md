@@ -59,8 +59,8 @@ Mint a **second** Warcon org API key, separate from the status fleet's, scoped t
 `server.view` + `audit.read` only, and tick it against every server in the
 organisation.
 
-**Do not tick Raw RCON or Automation.** Raw RCON lets the holder call kick, kill, ban
-and broadcast directly against a game server — this bot only reads. Automation is a
+**Do not tick Raw RCON or Automation.** Raw RCON lets the holder send any console
+command straight to a game server — this bot never needs it. Automation is a
 write capability: a key holding it can delete the `team_kill` trigger, or create one
 that kicks players outright. Neither is needed for anything this bot does; excluding
 both means a leaked modlog token cannot touch a game server or its triggers.
@@ -68,6 +68,44 @@ both means a leaked modlog token cannot touch a game server or its triggers.
 Without `audit.read`, kicks and bans silently read as zero rows rather than an error —
 `npm run preflight` (below) exists partly to catch a key missing that capability
 before it goes unnoticed.
+
+**For the Kick and Watch buttons**, also tick on the same servers:
+
+- **Kick, kill, move** (`players.moderate`) for Kick. The capability also covers kill and
+  change-team, which this bot never calls.
+- **Notes & watchlist** (`players.notes`) for Watch. It also lets the bot read *why* a player
+  is watched, so watched-player join alerts show the reason instead of pointing at the
+  dossier.
+
+Without them the bot still posts every alert, and pressing a button just replies that the
+key isn't allowed. These are the key's only write capabilities, and neither can touch a
+game server's config, bans or triggers.
+
+## The Kick and Watch buttons
+
+Alerts about one player carry a red **Kick** button and a blue **Watch** button: joins,
+hot players, and team kills (they act on the killer). A join by someone already on the
+watchlist shows Kick only. Kicks, bans and feed warnings carry no buttons.
+
+- **Who can press them:** only members holding `DISCORD_MOD_ROLE_ID`, the same role the
+  alerts ping. Anyone else gets a private "only @role can use these buttons" reply.
+- **Confirming:** pressing either opens a confirmation, shown only to the presser, with an
+  optional reason. Nothing happens until **Submit**, so a misclick is harmless.
+- **Kick:** the player sees the typed reason, or "Kicked by a moderator". The mod's name is
+  not sent to the game.
+- **Watch:** the player goes on the organisation's watchlist, so they're watched on every
+  server. Warcon credits every watchlist entry to the API key, so the stored reason
+  records the mod: `aimbot suspicion — added via Discord by ModMan`. It **never overwrites**
+  an existing watch: if the player is already on the watchlist, the mod is told why and
+  nothing changes.
+- **Afterwards:** the pressed button becomes a disabled **Kicked by <mod>** /
+  **Watched by <mod>** label (the other button still works), and a line in the channel
+  records who did what, on which server, and why. Warcon's audit trail shows the kick as
+  made by the modlog API key, so the admin log may post it too.
+
+The buttons need a live connection to Discord. The bot now holds one (Guilds intent only,
+no privileged intents), which is also why it shows as online. If that connection can't be
+made, alerts still post and only the buttons stop working; the log says so.
 
 ## Setup
 

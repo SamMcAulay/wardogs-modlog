@@ -84,4 +84,45 @@ export class WarconClient {
 
     return (await res.json()) as T;
   }
+
+  /**
+   * POST (or PUT) a panel action (e.g. `/api/servers/{id}/rcon/kick`). Unlike `getJson`, a refusal
+   * or a network failure resolves with a message instead of throwing: the caller shows it
+   * to a person, and Warcon's own wording ("not on the server", "needs Kick, kill, move")
+   * says more than a status code.
+   */
+  async postAction(path: string, body: unknown, method: 'POST' | 'PUT' = 'POST'): Promise<PostResult> {
+    const doFetch = this.opts.fetchImpl ?? fetch;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.opts.timeoutMs ?? 10_000);
+
+    let res: Response;
+    try {
+      res = await doFetch(`${this.opts.baseUrl}${path}`, {
+        method,
+        headers: { ...this.headers(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        redirect: 'manual',
+        signal: controller.signal
+      });
+    } catch (err) {
+      return { ok: false, status: 0, message: err instanceof Error ? err.message : String(err) };
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (res.ok) return { ok: true };
+    let message = `warcon request failed (${res.status})`;
+    try {
+      const parsed = (await res.json()) as { error?: { message?: unknown } };
+      if (typeof parsed.error?.message === 'string' && parsed.error.message) {
+        message = parsed.error.message;
+      }
+    } catch {
+      // not JSON (an HTML error page): keep the status line
+    }
+    return { ok: false, status: res.status, message };
+  }
 }
+
+export type PostResult = { ok: true } | { ok: false; status: number; message: string };

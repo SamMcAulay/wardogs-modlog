@@ -34,7 +34,12 @@ const summaryOf = (players: P[], matchSeconds: number | null = null): SummaryBod
 });
 
 /** A fake panel: one summary, marks answering `watched` for the listed ids; logs every path. */
-function panel(summary: SummaryBody, watched: string[] = [], failMarks = false) {
+function panel(summary: SummaryBody, watchedIn: string[] | Record<string, string> = [], failMarks = false) {
+  // A list of watched ids, or a map of watched id -> watch reason.
+  const reasons: Record<string, string> = Array.isArray(watchedIn)
+    ? Object.fromEntries(watchedIn.map((id) => [id, '']))
+    : watchedIn;
+  const watched = Object.keys(reasons);
   const paths: string[] = [];
   const client = {
     getJson: async (path: string) => {
@@ -47,7 +52,7 @@ function panel(summary: SummaryBody, watched: string[] = [], failMarks = false) 
           marks: [...ids, ...watched].map((steamId) => ({
             steamId,
             watched: watched.includes(steamId),
-            reason: '',
+            reason: reasons[steamId] ?? '',
             firstVisit: false
           }))
         } satisfies MarksBody;
@@ -61,7 +66,7 @@ function panel(summary: SummaryBody, watched: string[] = [], failMarks = false) 
 /** A server that has completed a clean cycle, so the live check runs. */
 const warm = (over: Partial<ServerState> = {}): ServerState => ({ ...emptyServerState(), warm: true, ...over });
 
-const run = (s: ServerState, summary: SummaryBody, watched: string[] = []) =>
+const run = (s: ServerState, summary: SummaryBody, watched: string[] | Record<string, string> = []) =>
   pollPresence(panel(summary, watched).client, 's1', s, cfg, NOW);
 
 const hots = (events: ModEvent[]) =>
@@ -268,6 +273,16 @@ describe('join alerts', () => {
     const [e] = joins(await run(warm(), summaryOf([{ steamId: 'c' }]), ['c']));
     expect(e!.sweatStats).toBeUndefined();
     expect(e!.highKdStats).toBeUndefined();
+  });
+
+  test("a watched player's join carries the watch reason", async () => {
+    const [e] = joins(await run(warm(), summaryOf([{ steamId: 'c' }]), { c: 'aimbot suspicion' }));
+    expect(e).toMatchObject({ watched: true, watchReason: 'aimbot suspicion' });
+  });
+
+  test('a watch with no reason on record carries none', async () => {
+    const [e] = joins(await run(warm(), summaryOf([{ steamId: 'c' }]), ['c']));
+    expect(e!.watchReason).toBeUndefined();
   });
 
   test('a joiner with no tag posts nothing', async () => {

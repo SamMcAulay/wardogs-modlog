@@ -1,5 +1,6 @@
 import { loadConfig } from './config.js';
 import { RestPoster, serverLabel } from './discord.js';
+import { startGateway } from './gateway.js';
 import { consoleLogger } from './log.js';
 import { runCycle } from './runner.js';
 import { pollAudit } from './sources/audit.js';
@@ -37,6 +38,15 @@ async function main(): Promise<void> {
   }
 
   const poster = new RestPoster(config.discordToken, config.discordChannelId);
+  // The live connection that answers Kick buttons. Alerts still post over REST, so a
+  // gateway that can't connect costs the buttons, not the alerts.
+  const gateway = startGateway({
+    token: config.discordToken,
+    modRoleId: config.discordModRoleId,
+    warcon: client,
+    serverLabels: config.serverLabels,
+    logger: log
+  });
   let lastKdAt = 0;
 
   const cycle = async (): Promise<void> => {
@@ -134,6 +144,7 @@ async function main(): Promise<void> {
       clearTimeout(cap);
       if (timedOut) log.warn(`in-flight cycle still running after ${SHUTDOWN_DRAIN_MS} ms, exiting anyway`);
     }
+    await gateway.destroy().catch(() => undefined);
     process.exit(0);
   };
   // Registered before the first cycle runs, so a signal during that first cycle is

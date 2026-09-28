@@ -54,6 +54,8 @@ export interface PlayerJoinedEvent {
   watched: boolean;
   sweat: boolean;
   highKd: boolean;
+  /** why they're on the watchlist, when the key may read it (Notes & watchlist) and one is recorded */
+  watchReason?: string;
   /** the numbers that put them on the sweat list, from its last refresh */
   sweatStats?: SweatStats;
   /** the numbers that put them on the high-K/D list, from its last refresh */
