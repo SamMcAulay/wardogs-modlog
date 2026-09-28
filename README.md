@@ -170,8 +170,8 @@ this, since server labels are things like `EU#1` and `NA#3`.
   startup (and so fails the deploy's preflight) with a message saying only the live alert pings.
 - The state file upgrades itself: the old cooldowns and dossier cache are dropped, and warm
   servers stay warm, so players already on a server are not reported as joining.
-- Until the first hourly refresh after the upgrade, the known lists are empty and joins carry
-  only the watched tag.
+- The known lists load on the bot's first cycle after it starts (and are retried every cycle
+  until they load). Until then, joins carry only the watched tag.
 - Preflight now reports a `live data` line per server: `live check active`, or `no match
   clock` for a server that is empty or doesn't report one. Neither fails a deploy.
 
