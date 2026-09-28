@@ -24,15 +24,16 @@ export interface Config {
   kdMinMatches: number;
   kdMinMinutes: number;
   kdRange: string;
-  kdCooldownDays: number;
   feedQuietMinutes: number;
   sweatPerHour: number;
   sweatRange: string;
-  surgeRange: string;
-  surgePerHour: number;
-  surgeRatio: number;
-  surgeHistoryMinutes: number;
   rateMinMinutes: number;
+  /** live-alerts spec §3: a player is hot at or above all three */
+  livePerHour: number;
+  liveMinMinutes: number;
+  liveMinKills: number;
+  /** live-alerts spec §4.3: how long a sweat / high-K/D join tag stays quiet after posting */
+  joinAlertHours: number;
 }
 
 function parseServerLabels(raw: string): Record<string, string> {
@@ -51,10 +52,13 @@ function parseServerLabels(raw: string): Record<string, string> {
   return labels;
 }
 
-/** Kinds that pinged before tiering; named in the error so an old .env explains itself. */
-const RETIRED_PING_KINDS = ['teamKill', 'watchedJoin', 'highKd'];
+/** Kinds that pinged in earlier versions; named in the error so an old .env explains itself. */
+const RETIRED_PING_KINDS = ['sweat', 'surge', 'teamKill', 'watchedJoin', 'highKd'];
 
-/** Unset or blank: every tier-3 kind pings. `none`: nothing does. Otherwise a comma list. */
+/**
+ * Unset or blank: the live alert pings (live-alerts spec §7). `none`: nothing does.
+ * Otherwise a comma list, whose only valid entry is `live`.
+ */
 function parsePingOn(raw: string): ReadonlySet<PingKind> {
   const value = raw.trim();
   if (value === '') return new Set(PING_KINDS);
@@ -65,7 +69,7 @@ function parsePingOn(raw: string): ReadonlySet<PingKind> {
     if (!entry) continue;
     if (RETIRED_PING_KINDS.includes(entry)) {
       throw new Error(
-        `PING_ON entry "${entry}" no longer pings: only tier-3 alerts (sweat, surge) mention the mod role — use sweat, surge or none`
+        `PING_ON entry "${entry}" no longer pings: only the live alert (live) mentions the mod role — use live or none`
       );
     }
     if (!(PING_KINDS as readonly string[]).includes(entry)) {
@@ -161,14 +165,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     kdMinMatches: num('KD_MIN_MATCHES', 5),
     kdMinMinutes: num('KD_MIN_MINUTES', 60),
     kdRange: range('KD_RANGE', '30d'),
-    kdCooldownDays: num('KD_COOLDOWN_DAYS', 7),
     feedQuietMinutes: num('FEED_QUIET_MINUTES', 30),
     sweatPerHour: num('SWEAT_PER_HOUR', 15),
     sweatRange: range('SWEAT_RANGE', '30d'),
-    surgeRange: range('SURGE_RANGE', '7d'),
-    surgePerHour: num('SURGE_PER_HOUR', 10),
-    surgeRatio: num('SURGE_RATIO', 1.5),
-    surgeHistoryMinutes: num('SURGE_HISTORY_MINUTES', 600),
-    rateMinMinutes: num('RATE_MIN_MINUTES', 180)
+    rateMinMinutes: num('RATE_MIN_MINUTES', 180),
+    livePerHour: num('LIVE_PER_HOUR', 20),
+    liveMinMinutes: num('LIVE_MIN_MINUTES', 20),
+    liveMinKills: num('LIVE_MIN_KILLS', 8),
+    joinAlertHours: num('JOIN_ALERT_HOURS', 24)
   };
 }

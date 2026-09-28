@@ -293,6 +293,8 @@ reported as new.
 
 ## 8. Rules
 
+> Superseded where they disagree by `2026-09-27-live-alerts-design.md` (live alerts).
+
 Amended 2026-09-26 by `2026-09-26-tiered-alerts-design.md`: alerts are tiered, only tier 3 (sweat, surge) pings, and team kills no longer ping. Where the two disagree, the amendment wins.
 
 `PING_ON` (added 2026-09-26) lists which tier-3 alerts (sweat, surge) mention the role;

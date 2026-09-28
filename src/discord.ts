@@ -35,7 +35,7 @@ export interface DiscordMessage {
   allowed_mentions: { parse: []; roles?: string[] };
 }
 
-/** Tier colours (tiered-alerts spec §2); untiered alerts keep their own. */
+/** Tier colours (live-alerts spec §2); untiered alerts keep their own. */
 const COLOR = {
   tier1: 0x3498db,
   tier2: 0xe67e22,
@@ -57,8 +57,14 @@ const field = (name: string, value: string, inline = true): EmbedField => ({
 /** `Id.Item.AK74M` -> `AK74M`; Warcon labels these properly, we only shorten. */
 const weapon = (cause: string | null): string => (cause ? (cause.split('.').pop() ?? cause) : '—');
 
-/** 600 -> `10.0 h` */
-const hours = (minutes: number): string => `${(minutes / 60).toFixed(1)} h`;
+/** A join's tags as staff read them, e.g. `watched · sweat` (live-alerts spec §5). */
+export function joinTags(e: { watched: boolean; sweat: boolean; highKd: boolean }): string {
+  const tags: string[] = [];
+  if (e.watched) tags.push('watched');
+  if (e.sweat) tags.push('sweat');
+  if (e.highKd) tags.push('high K/D');
+  return tags.join(' · ');
+}
 
 function embedFor(e: ModEvent, links: LinkConfig): Embed {
   const base = `${links.panelPublicUrl}/server/${encodeURIComponent(e.serverId)}`;
@@ -90,33 +96,6 @@ function embedFor(e: ModEvent, links: LinkConfig): Embed {
       };
     }
 
-    case 'watchedJoin':
-      return {
-        title: `Watched player joined — ${e.name}`,
-        // The reason needs players.notes, which this key does not hold (spec §5.3).
-        url: `${base}/players/${encodeURIComponent(e.steamId)}`,
-        color: COLOR.tier1,
-        timestamp: e.at,
-        description: 'Open the dossier for the watch reason.',
-        fields: [field('Steam ID', e.steamId)],
-        footer: { text: 'Tier 1 · watchlist' }
-      };
-
-    case 'highKd':
-      return {
-        title: `High K/D — ${e.name}`,
-        url: `${base}/players/${encodeURIComponent(e.steamId)}`,
-        color: COLOR.tier2,
-        timestamp: e.at,
-        fields: [
-          field('K/D', e.kd.toFixed(2)),
-          field('Kills / deaths', `${e.kills} / ${e.deaths}`),
-          field('Matches', String(e.matches)),
-          field('Playtime', `${Math.round(e.minutes)} min`)
-        ],
-        footer: { text: 'Tier 2 · high K/D' }
-      };
-
     case 'feedQuiet':
       return {
         title: 'Kill feed has gone quiet',
@@ -128,31 +107,34 @@ function embedFor(e: ModEvent, links: LinkConfig): Embed {
         fields: [field('Last batch', e.lastFeedAt ?? 'never')]
       };
 
-    case 'killRate': {
-      const what = e.sweat && e.surge ? 'Sweat + surge' : e.sweat ? 'Sweat' : 'Surge';
-      const fields: EmbedField[] = [];
-      if (e.sweat) {
-        fields.push(field(`Kills/hour (${e.sweat.range})`, e.sweat.perHour.toFixed(1)));
-        fields.push(field(`Playtime (${e.sweat.range})`, hours(e.sweat.minutes)));
-      }
-      if (e.surge) {
-        fields.push(field(`Recent kills/hour (${e.surge.range})`, e.surge.perHour.toFixed(1)));
-        fields.push(
-          field('Usual kills/hour', `${e.surge.usualPerHour.toFixed(1)} over ${hours(e.surge.usualMinutes)}`)
-        );
-        fields.push(
-          field('Vs usual', Number.isFinite(e.surge.ratio) ? `${e.surge.ratio.toFixed(1)}×` : 'new')
-        );
-      }
+    case 'playerJoined': {
+      // One post per connection, at the highest tier its tags reach (live-alerts spec §2).
+      const known = e.sweat || e.highKd;
       return {
-        title: `${what} — ${e.name}`,
+        title: `Joined — ${e.name}`,
+        url: `${base}/players/${encodeURIComponent(e.steamId)}`,
+        color: known ? COLOR.tier2 : COLOR.tier1,
+        timestamp: e.at,
+        // The reason needs players.notes, which this key does not hold (spec §5.3).
+        ...(e.watched ? { description: 'Open the dossier for the watch reason.' } : {}),
+        fields: [field('Tags', joinTags(e)), field('Steam ID', e.steamId)],
+        footer: { text: known ? 'Tier 2 · known player' : 'Tier 1 · watchlist' }
+      };
+    }
+
+    case 'hotPlayer':
+      return {
+        title: `Hot right now — ${e.name}`,
         url: `${base}/players/${encodeURIComponent(e.steamId)}`,
         color: COLOR.tier3,
         timestamp: e.at,
-        fields,
-        footer: { text: `Tier 3 · ${what.toLowerCase()}` }
+        fields: [
+          field('Kills / deaths', `${e.kills} / ${e.deaths}`),
+          field('Minutes this match', String(Math.round(e.minutes))),
+          field('Kills/hour', e.perHour.toFixed(1))
+        ],
+        footer: { text: 'Tier 3 · hot right now' }
       };
-    }
   }
 }
 

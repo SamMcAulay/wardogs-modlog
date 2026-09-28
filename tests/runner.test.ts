@@ -6,9 +6,10 @@ import { PING_KINDS } from '../src/escalate.js';
 import { retryKey, runCycle, type CycleDeps } from '../src/runner.js';
 import { emptyState, loadState, saveState, serverState, type State } from '../src/state.js';
 import type { DiscordMessage } from '../src/discord.js';
-import type { ModEvent } from '../src/events.js';
+import type { HotPlayerEvent, ModEvent, PlayerJoinedEvent } from '../src/events.js';
 
 const NOW = Date.parse('2026-09-24T12:00:00.000Z');
+const HOUR = 3_600_000;
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
 
@@ -37,15 +38,14 @@ function deps(over: Partial<CycleDeps> = {}): CycleDeps {
     now: NOW,
     runKd: false,
     logger: silent,
-    escalateConfig: { kdCooldownDays: 7, pingOn: new Set(PING_KINDS) },
+    escalateConfig: { joinAlertHours: 24, pingOn: new Set(PING_KINDS) },
     links: { panelPublicUrl: 'https://panel.example.com', serverLabels: {} },
     modRoleId: '999',
     sources: {
       kills: async () => [],
       audit: async () => [],
-      watchlist: async () => [],
-      kd: async () => [],
-      killRate: async () => []
+      known: async () => [],
+      presence: async () => []
     },
     poster: { post: async () => {} },
     save: async () => {},
@@ -53,17 +53,28 @@ function deps(over: Partial<CycleDeps> = {}): CycleDeps {
   };
 }
 
-const highKd = (steamId: string): ModEvent => ({
-  kind: 'highKd',
+const joined = (steamId: string, over: Partial<PlayerJoinedEvent> = {}): PlayerJoinedEvent => ({
+  kind: 'playerJoined',
   serverId: 's1',
   at: '2026-09-24T12:00:00.000Z',
   steamId,
   name: steamId === '765' ? 'Alpha' : 'Bravo',
-  kd: 5.2,
-  kills: 52,
-  deaths: 10,
-  matches: 9,
-  minutes: 400
+  watched: false,
+  sweat: true,
+  highKd: false,
+  ...over
+});
+
+const hot = (steamId: string): HotPlayerEvent => ({
+  kind: 'hotPlayer',
+  serverId: 's1',
+  at: '2026-09-24T12:00:00.000Z',
+  steamId,
+  name: steamId === '765' ? 'Alpha' : 'Bravo',
+  kills: 12,
+  deaths: 3,
+  minutes: 30,
+  perHour: 24
 });
 
 describe('runCycle', () => {
@@ -77,9 +88,8 @@ describe('runCycle', () => {
         sources: {
           kills: async () => [],
           audit: async () => [adminEvent(1)],
-          watchlist: async () => [],
-          kd: async () => [],
-          killRate: async () => []
+          known: async () => [],
+          presence: async () => []
         },
         poster: { post: async (m) => void posted.push(m) },
         save
@@ -93,13 +103,9 @@ describe('runCycle', () => {
     const order: string[] = [];
     const saved: State[] = [];
     const state = warmState('s1', 's2');
-    const rate = (serverId: string): ModEvent => ({
-      kind: 'killRate', serverId, at: '2026-09-24T12:00:00.000Z', steamId: `p-${serverId}`, name: 'R',
-      sweat: { perHour: 20, kills: 200, minutes: 600, range: '30d' }, surge: null
-    });
     const source = (name: string) => async (id: string) => {
       order.push(`${name}:${id}`);
-      return name === 'killRate' ? [rate(id)] : [];
+      return name === 'presence' ? [{ ...joined(`p-${id}`), serverId: id }] : [];
     };
     await runCycle(
       deps({
@@ -109,9 +115,8 @@ describe('runCycle', () => {
         sources: {
           kills: source('kills'),
           audit: source('audit'),
-          watchlist: source('watchlist'),
-          kd: source('kd'),
-          killRate: source('killRate')
+          known: source('known'),
+          presence: source('presence')
         },
         save: async (s) => {
           order.push('save');
@@ -120,12 +125,53 @@ describe('runCycle', () => {
       })
     );
     // The first save lands before s2's sources run, and the cycle still ends with one.
-    expect(order.indexOf('save')).toBeGreaterThan(order.indexOf('killRate:s1'));
+    expect(order.indexOf('save')).toBeGreaterThan(order.indexOf('presence:s1'));
     expect(order.indexOf('save')).toBeLessThan(order.indexOf('kills:s2'));
     expect(order.at(-1)).toBe('save');
     expect(saved.length).toBeGreaterThanOrEqual(3);
-    // What that first save holds: s1's delivered alert and its cooldown stamp.
-    expect(saved[0]!.rateAlerted).toEqual({ 'sweat:p-s1': NOW });
+    // What that first save holds: s1's delivered join and its once-a-day stamp.
+    expect(saved[0]!.joinAlerted).toEqual({ 'p-s1': NOW });
+  });
+
+  test('sources run in order: kills, audit, known, then presence', async () => {
+    const order: string[] = [];
+    const source = (name: string) => async () => {
+      order.push(name);
+      return [];
+    };
+    const sources = {
+      kills: source('kills'),
+      audit: source('audit'),
+      known: source('known'),
+      presence: source('presence')
+    };
+    await runCycle(deps({ state: warmState(), runKd: true, sources }));
+    expect(order).toEqual(['kills', 'audit', 'known', 'presence']);
+  });
+
+  test('once loaded, the known lists refresh only on the K/D schedule; presence runs every cycle', async () => {
+    const state = emptyState();
+    serverState(state, 's1').knownAt = NOW - 60_000;
+    const known = vi.fn(async () => []);
+    const presence = vi.fn(async () => []);
+    const sources = { kills: async () => [], audit: async () => [], known, presence };
+    await runCycle(deps({ state, runKd: false, sources }));
+    expect(known).not.toHaveBeenCalled();
+    expect(presence).toHaveBeenCalledOnce();
+    await runCycle(deps({ state, runKd: true, sources }));
+    expect(known).toHaveBeenCalledOnce();
+    expect(presence).toHaveBeenCalledTimes(2);
+  });
+
+  test('lists that have never loaded are retried every cycle, not left empty for an hour', async () => {
+    const state = emptyState();
+    const known = vi.fn(async () => {
+      throw new Error('board down');
+    });
+    const sources = { kills: async () => [], audit: async () => [], known, presence: async () => [] };
+    await runCycle(deps({ state, runKd: true, sources }));
+    await runCycle(deps({ state, runKd: false, sources }));
+    expect(known).toHaveBeenCalledTimes(2);
   });
 
   test('a cold start records position and posts nothing', async () => {
@@ -138,9 +184,8 @@ describe('runCycle', () => {
         sources: {
           kills: async () => [],
           audit: async () => [adminEvent(1)],
-          watchlist: async () => [],
-          kd: async () => [],
-          killRate: async () => []
+          known: async () => [],
+          presence: async () => []
         },
         poster: { post: async (m) => void posted.push(m) },
         save
@@ -162,9 +207,8 @@ describe('runCycle', () => {
             throw new Error('warcon down');
           },
           audit: async () => [adminEvent(1)],
-          watchlist: async () => [],
-          kd: async () => [],
-          killRate: async () => []
+          known: async () => [],
+          presence: async () => []
         },
         poster: { post: async (m) => void posted.push(m) }
       })
@@ -185,9 +229,8 @@ describe('runCycle', () => {
         sources: {
           kills: async () => [],
           audit: audit as CycleDeps['sources']['audit'],
-          watchlist: async () => [],
-          kd: async () => [],
-          killRate: async () => []
+          known: async () => [],
+          presence: async () => []
         },
         poster: {
           post: async () => {
@@ -197,43 +240,6 @@ describe('runCycle', () => {
       })
     );
     expect(serverState(state, 's1').lastAuditId).toBe(0);
-  });
-
-  test('a failed post also rolls back the K/D cooldown', async () => {
-    const state = warmState();
-    await runCycle(
-      deps({
-        state,
-        runKd: true,
-        sources: {
-          kills: async () => [],
-          audit: async () => [],
-          watchlist: async () => [],
-          kd: async () => [
-            {
-              kind: 'highKd',
-              serverId: 's1',
-              at: '2026-09-24T12:00:00.000Z',
-              steamId: '765',
-              name: 'Alpha',
-              kd: 5.2,
-              kills: 52,
-              deaths: 10,
-              matches: 9,
-              minutes: 400
-            }
-          ],
-          killRate: async () => []
-        },
-        poster: {
-          post: async () => {
-            throw new Error('discord 500');
-          }
-        }
-      })
-    );
-    // Nobody was told, so the seven-day cooldown must not have started.
-    expect(state.kdAlerted['765']).toBeUndefined();
   });
 
   test('a successful post keeps the advanced cursor', async () => {
@@ -248,22 +254,12 @@ describe('runCycle', () => {
         sources: {
           kills: async () => [],
           audit: audit as CycleDeps['sources']['audit'],
-          watchlist: async () => [],
-          kd: async () => [],
-          killRate: async () => []
+          known: async () => [],
+          presence: async () => []
         }
       })
     );
     expect(serverState(state, 's1').lastAuditId).toBe(7);
-  });
-
-  test('the K/D source only runs when asked', async () => {
-    const kd = vi.fn(async () => []);
-    await runCycle(deps({ runKd: false, sources: { kills: async () => [], audit: async () => [], watchlist: async () => [], kd, killRate: async () => [] } }));
-    expect(kd).not.toHaveBeenCalled();
-
-    await runCycle(deps({ runKd: true, sources: { kills: async () => [], audit: async () => [], watchlist: async () => [], kd, killRate: async () => [] } }));
-    expect(kd).toHaveBeenCalledOnce();
   });
 
   test('a retry skips an event that already posted before a failure, then clears once a cycle completes cleanly', async () => {
@@ -291,7 +287,7 @@ describe('runCycle', () => {
     await runCycle(
       deps({
         state,
-        sources: { kills: async () => [], audit, watchlist: async () => [], kd: async () => [], killRate: async () => [] },
+        sources: { kills: async () => [], audit, known: async () => [], presence: async () => [] },
         poster: { post }
       })
     );
@@ -305,7 +301,7 @@ describe('runCycle', () => {
     await runCycle(
       deps({
         state,
-        sources: { kills: async () => [], audit, watchlist: async () => [], kd: async () => [], killRate: async () => [] },
+        sources: { kills: async () => [], audit, known: async () => [], presence: async () => [] },
         poster: { post }
       })
     );
@@ -318,170 +314,38 @@ describe('runCycle', () => {
   test('a watched join skipped on the immediate retry still alerts on a later genuine rejoin', async () => {
     const posted: DiscordMessage[] = [];
     const state = warmState();
-
-    const watchedJoinEvent: ModEvent = {
-      kind: 'watchedJoin',
-      serverId: 's1',
-      at: '2026-09-24T12:00:00.000Z',
-      steamId: '765',
-      name: 'Ghost'
-    };
-    const highKdEvent: ModEvent = {
-      kind: 'highKd',
-      serverId: 's1',
-      at: '2026-09-24T12:00:00.000Z',
-      steamId: '999',
-      name: 'Alpha',
-      kd: 5.2,
-      kills: 52,
-      deaths: 10,
-      matches: 9,
-      minutes: 400
-    };
+    const watchedJoin = joined('765', { watched: true, sweat: false });
+    const sources = (events: ModEvent[]) => ({
+      kills: async () => [],
+      audit: async () => [],
+      known: async () => [],
+      presence: async () => events
+    });
 
     let callCount = 0;
     const post = vi.fn(async (m: DiscordMessage) => {
       callCount++;
-      if (callCount === 2) throw new Error('discord 500'); // the K/D post fails
+      if (callCount === 2) throw new Error('discord 500'); // the hot alert fails
       posted.push(m);
     });
 
-    // Cycle 1: the watched join posts; the K/D alert (which runs after watchlist)
-    // fails to post, rolling the server entry back — including presentSteamIds, so
-    // the same arrival would look "new" again on a re-read.
-    await runCycle(
-      deps({
-        state,
-        runKd: true,
-        sources: {
-          kills: async () => [],
-          audit: async () => [],
-          watchlist: async () => [watchedJoinEvent],
-          kd: async () => [highKdEvent],
-          killRate: async () => []
-        },
-        poster: { post }
-      })
-    );
+    // Cycle 1: the watched join posts; the hot alert after it fails to post, rolling the
+    // server entry back — including presentSteamIds, so the same arrival would look
+    // "new" again on a re-read.
+    await runCycle(deps({ state, sources: sources([watchedJoin, hot('999')]), poster: { post } }));
     expect(posted).toHaveLength(1); // only the watched join delivered
-    expect(serverState(state, 's1').postedBeforeFailure).toEqual(['watchedJoin:s1:765']);
+    expect(serverState(state, 's1').postedBeforeFailure).toEqual(['playerJoined:s1:765']);
 
     // Cycle 2 (the immediate retry): the same arrival is re-read, but its retry key is
     // already recorded — must not post a second time. Nothing else fails this cycle.
-    await runCycle(
-      deps({
-        state,
-        sources: {
-          kills: async () => [],
-          audit: async () => [],
-          watchlist: async () => [watchedJoinEvent],
-          kd: async () => [],
-          killRate: async () => []
-        },
-        poster: { post }
-      })
-    );
+    await runCycle(deps({ state, sources: sources([watchedJoin]), poster: { post } }));
     expect(posted).toHaveLength(1); // still just the one delivery
     expect(serverState(state, 's1').postedBeforeFailure).toEqual([]); // clean cycle clears it
 
     // Cycle 3: a genuine later rejoin (same steamId) — one-cycle scope means it must
     // still alert, not be silently swallowed forever.
-    await runCycle(
-      deps({
-        state,
-        sources: {
-          kills: async () => [],
-          audit: async () => [],
-          watchlist: async () => [watchedJoinEvent],
-          kd: async () => [],
-          killRate: async () => []
-        },
-        poster: { post }
-      })
-    );
+    await runCycle(deps({ state, sources: sources([watchedJoin]), poster: { post } }));
     expect(posted).toHaveLength(2); // the later rejoin posts
-  });
-
-  test('an undelivered K/D alert waits for the next K/D run, then sets its cooldown', async () => {
-    const state = warmState();
-    const kd = vi.fn(async () => [highKd('765')]);
-    const sources = { kills: async () => [], audit: async () => [], watchlist: async () => [], kd, killRate: async () => [] };
-
-    // Cycle 1: the only decision this cycle is the K/D alert, and its post fails — the
-    // cooldown must roll back with it, leaving the player unreported.
-    await runCycle(
-      deps({
-        state,
-        runKd: true,
-        sources,
-        poster: {
-          post: async () => {
-            throw new Error('discord 500');
-          }
-        }
-      })
-    );
-    expect(state.kdAlerted['765']).toBeUndefined();
-
-    // Cycle 2: an ordinary 30-second cycle, the K/D board not due. Nothing is forced:
-    // the alert is not urgent and waits (controller ruling I3).
-    const posted: DiscordMessage[] = [];
-    const poster = { post: async (m: DiscordMessage) => void posted.push(m) };
-    await runCycle(deps({ state, now: NOW + 30_000, runKd: false, sources, poster }));
-    expect(posted).toHaveLength(0);
-    expect(state.kdAlerted['765']).toBeUndefined();
-
-    // Cycle 3: the next hourly K/D run re-flags the player, and this time it posts.
-    await runCycle(deps({ state, now: NOW + 3_600_000, runKd: true, sources, poster }));
-    expect(posted).toHaveLength(1);
-    expect(state.kdAlerted['765']).toBe(NOW + 3_600_000);
-  });
-
-  test('a K/D alert that posted keeps its cooldown when a later post in the cycle fails', async () => {
-    const state = warmState();
-    const kd = async () => [highKd('765'), highKd('766')];
-    const sources = { kills: async () => [], audit: async () => [], watchlist: async () => [], kd, killRate: async () => [] };
-
-    const posted: DiscordMessage[] = [];
-    let calls = 0;
-    await runCycle(
-      deps({
-        state,
-        runKd: true,
-        sources,
-        poster: {
-          post: async (m) => {
-            if (++calls === 2) throw new Error('discord 500'); // 766's alert fails
-            posted.push(m);
-          }
-        }
-      })
-    );
-    expect(posted).toHaveLength(1); // 765 was told
-    expect(state.kdAlerted['765']).toBe(NOW); // ...so its cooldown stands
-    expect(state.kdAlerted['766']).toBeUndefined(); // ...and 766's does not
-
-    // The next K/D run, clean: 765 is still cooling down, only 766 posts.
-    posted.length = 0;
-    await runCycle(
-      deps({
-        state,
-        now: NOW + 3_600_000,
-        runKd: true,
-        sources,
-        poster: { post: async (m) => void posted.push(m) }
-      })
-    );
-    expect(posted).toHaveLength(1);
-    expect(posted[0]!.embeds[0]!.title).toContain('Bravo');
-  });
-
-  test('prunes K/D cooldowns that have expired before saving', async () => {
-    const state = warmState();
-    const day = 86_400_000;
-    state.kdAlerted = { expired: NOW - 7 * day, fresh: NOW - 6 * day };
-    await runCycle(deps({ state }));
-    expect(state.kdAlerted).toEqual({ fresh: NOW - 6 * day });
   });
 
   test('keeps postedBeforeFailure when a source threw on the retry cycle', async () => {
@@ -506,9 +370,8 @@ describe('runCycle', () => {
     const sources = (a: CycleDeps['sources']['audit']) => ({
       kills: async () => [],
       audit: a,
-      watchlist: async () => [],
-      kd: async () => [],
-      killRate: async () => []
+      known: async () => [],
+      presence: async () => []
     });
 
     await runCycle(deps({ state, sources: sources(audit), poster: { post } }));
@@ -538,7 +401,7 @@ describe('runCycle', () => {
       deps({
         state,
         logger: { ...silent, error },
-        sources: { kills: async () => [], audit, watchlist: async () => [], kd: async () => [], killRate: async () => [] },
+        sources: { kills: async () => [], audit, known: async () => [], presence: async () => [] },
         poster: {
           post: async (m) => {
             if (++calls === 1) {
@@ -569,7 +432,7 @@ describe('runCycle', () => {
     await runCycle(
       deps({
         state,
-        sources: { kills: async () => [], audit, watchlist: async () => [], kd: async () => [], killRate: async () => [] },
+        sources: { kills: async () => [], audit, known: async () => [], presence: async () => [] },
         poster: {
           post: async () => {
             throw Object.assign(new Error('You are being rate limited.'), { status: 429 });
@@ -591,9 +454,8 @@ describe('runCycle', () => {
             throw new Error('warcon down');
           },
           audit: async () => [],
-          watchlist: async () => [],
-          kd: async () => [],
-          killRate: async () => []
+          known: async () => [],
+          presence: async () => []
         },
         save
       })
@@ -610,16 +472,15 @@ describe('runCycle', () => {
         sources: {
           kills: async () => [],
           audit: async () => [],
-          watchlist: async () => [],
-          kd: async () => [],
-          killRate: async () => []
+          known: async () => [],
+          presence: async () => []
         }
       })
     );
     expect(serverState(state, 's1').warm).toBe(true);
   });
 
-  test('a failing K/D board does not keep a server cold: it has no cursor', async () => {
+  test('a failing known source does not keep a server cold: it has no cursor', async () => {
     const state = emptyState();
     await runCycle(
       deps({
@@ -628,11 +489,10 @@ describe('runCycle', () => {
         sources: {
           kills: async () => [],
           audit: async () => [],
-          watchlist: async () => [],
-          kd: async () => {
+          known: async () => {
             throw new Error('leaderboard down');
           },
-          killRate: async () => []
+          presence: async () => []
         }
       })
     );
@@ -647,7 +507,7 @@ describe('runCycle', () => {
       deps({
         serverIds: ['s1', 's2'],
         state,
-        sources: { kills: async () => [], audit, watchlist: async () => [], kd: async () => [], killRate: async () => [] },
+        sources: { kills: async () => [], audit, known: async () => [], presence: async () => [] },
         poster: { post: async (m) => void posted.push(m) }
       })
     );
@@ -668,9 +528,8 @@ describe('runCycle', () => {
           audit: async () => {
             throw new Error('audit 503');
           },
-          watchlist: async () => [],
-          kd: async () => [],
-          killRate: async () => []
+          known: async () => [],
+          presence: async () => []
         },
         save: (s) => saveState(path, s)
       })
@@ -686,9 +545,8 @@ describe('runCycle', () => {
         sources: {
           kills: async () => [],
           audit: async () => [adminEvent(1)], // the backlog, now readable
-          watchlist: async () => [],
-          kd: async () => [],
-          killRate: async () => []
+          known: async () => [],
+          presence: async () => []
         },
         poster: { post: async (m) => void posted.push(m) }
       })
@@ -703,9 +561,8 @@ describe('runCycle', () => {
     const sources = {
       kills: async () => [],
       audit: async () => [adminEvent(1)],
-      watchlist: async () => [],
-      kd: async () => [],
-      killRate: async () => []
+      known: async () => [],
+      presence: async () => []
     };
     const poster = { post: async (m: DiscordMessage) => void posted.push(m) };
     await runCycle(deps({ state, sources, poster })); // cold: records position
@@ -724,7 +581,7 @@ describe('runCycle', () => {
       deps({
         serverIds: ['s1', 's2'],
         state,
-        sources: { kills: async () => [], audit, watchlist: async () => [], kd: async () => [], killRate: async () => [] }
+        sources: { kills: async () => [], audit, known: async () => [], presence: async () => [] }
       })
     );
     expect(serverState(state, 's1').warm).toBe(false);
@@ -740,87 +597,136 @@ describe('runCycle', () => {
     expect(info.mock.calls.filter(([m]) => /warm/.test(String(m)))).toHaveLength(1);
   });
 
-  test('retryKey drops the cycle time from a kill-rate event', () => {
-    expect(
-      retryKey({
-        kind: 'killRate',
-        serverId: 's1',
-        at: '2026-09-24T12:00:00.000Z',
-        steamId: '765',
-        name: 'Alpha',
-        sweat: null,
-        surge: null
-      })
-    ).toBe('killRate:s1:765');
+  test('retryKey drops the cycle time from join and hot events', () => {
+    expect(retryKey(joined('765'))).toBe('playerJoined:s1:765');
+    expect(retryKey(hot('765'))).toBe('hotPlayer:s1:765');
   });
 });
 
-describe('kill-rate alerts in the cycle', () => {
-  const rateEvent = (steamId: string): ModEvent => ({
-    kind: 'killRate',
-    serverId: 's1',
-    at: '2026-09-24T12:00:00.000Z',
-    steamId,
-    name: steamId,
-    sweat: { perHour: 18, kills: 180, minutes: 600, range: '30d' },
-    surge: null
-  });
-
-  test('runs only on the K/D schedule', async () => {
-    const killRate = vi.fn(async () => []);
-    const base = deps({ state: warmState() });
-    await runCycle({ ...base, runKd: false, sources: { ...base.sources, killRate } });
-    expect(killRate).not.toHaveBeenCalled();
-    await runCycle({ ...base, runKd: true, sources: { ...base.sources, killRate } });
-    expect(killRate).toHaveBeenCalledWith('s1');
-  });
-
-  test('a failing kill-rate read does not keep a cold server cold', async () => {
-    const state = emptyState();
-    const base = deps({ state, runKd: true });
-    await runCycle({
-      ...base,
-      sources: { ...base.sources, killRate: async () => { throw new Error('board down'); } }
-    });
-    expect(state.servers['s1']!.warm).toBe(true);
-  });
-
-  test('a failed post rolls back kill-rate cooldowns and baselines but keeps delivered ones', async () => {
+describe('live alerts in the cycle', () => {
+  test('a failed post rolls back match.alerted and joinAlerted, and re-stamps delivered joins', async () => {
     const state = warmState();
-    state.baselines['s1:old'] = { perHour: 9, minutes: 900, at: NOW };
-    let calls = 0;
-    const base = deps({ state, runKd: true });
-    await runCycle({
-      ...base,
-      sources: {
-        ...base.sources,
-        killRate: async () => {
-          state.baselines['s1:new'] = { perHour: 11, minutes: 700, at: NOW }; // looked up this run
-          return [rateEvent('765'), rateEvent('766')];
-        }
-      },
-      poster: {
-        post: async () => {
-          calls++;
-          if (calls === 2) throw new Error('discord down');
-        }
-      }
-    });
-    expect(state.rateAlerted['sweat:765']).toBe(NOW); // delivered: cooldown stands
-    expect(state.rateAlerted['sweat:766']).toBeUndefined(); // not delivered: retried
-    expect(state.baselines).toEqual({ 's1:old': { perHour: 9, minutes: 900, at: NOW } });
-  });
-
-  test('expired kill-rate cooldowns and day-old baselines are pruned before saving', async () => {
-    const day = 86_400_000;
-    const state = warmState();
-    state.rateAlerted = { 'sweat:old': NOW - 7 * day, 'surge:new': NOW - 6 * day };
-    state.baselines = {
-      's1:old': { perHour: 1, minutes: 1, at: NOW - day },
-      's1:new': { perHour: 1, minutes: 1, at: NOW - day + 1 }
+    const presence: CycleDeps['sources']['presence'] = async (_id, s) => {
+      s.match = { lastMatchSeconds: 1800, firstSeen: { '765': 0, '766': 0, '767': 0 }, alerted: ['765', '766'] };
+      return [joined('765'), joined('767'), hot('765'), hot('766')];
     };
+    let calls = 0;
+    await runCycle(
+      deps({
+        state,
+        sources: { kills: async () => [], audit: async () => [], known: async () => [], presence },
+        poster: {
+          post: async () => {
+            if (++calls === 4) throw new Error('discord down'); // 766's hot alert
+          }
+        }
+      })
+    );
+    // Both joins went out: their stamps stand, so the retry does not tag them again.
+    expect(state.joinAlerted).toEqual({ '765': NOW, '767': NOW });
+    // 766's hot alert did not: it is out of alerted, so the next cycle re-emits it.
+    // 765's did, and stays marked for this match.
+    const s = serverState(state, 's1');
+    expect(s.match.alerted).toEqual(['765']);
+    expect(s.match.lastMatchSeconds).toBeNull(); // the rest of the match state rolled back
+    expect([...s.postedBeforeFailure].sort()).toEqual(
+      ['hotPlayer:s1:765', 'playerJoined:s1:765', 'playerJoined:s1:767'].sort()
+    );
+  });
+
+  test('an undelivered known join leaves joinAlerted unstamped', async () => {
+    const state = warmState();
+    await runCycle(
+      deps({
+        state,
+        sources: { kills: async () => [], audit: async () => [], known: async () => [], presence: async () => [joined('765')] },
+        poster: {
+          post: async () => {
+            throw new Error('discord 500');
+          }
+        }
+      })
+    );
+    expect(state.joinAlerted).toEqual({});
+  });
+
+  test('the retry re-emits an undelivered hot player and skips a delivered one', async () => {
+    const state = warmState();
+    const posted: DiscordMessage[] = [];
+    let calls = 0;
+    const poster = {
+      post: async (m: DiscordMessage) => {
+        if (++calls === 2) throw new Error('discord 500');
+        posted.push(m);
+      }
+    };
+    // A stand-in for presence: reports whoever is hot and not yet alerted this match.
+    const presence: CycleDeps['sources']['presence'] = async (_id, s) => {
+      const fresh = ['765', '766'].filter((id) => !s.match.alerted.includes(id));
+      s.match.alerted.push(...fresh);
+      return fresh.map(hot);
+    };
+    const sources = { kills: async () => [], audit: async () => [], known: async () => [], presence };
+    await runCycle(deps({ state, sources, poster }));
+    expect(posted).toHaveLength(1);
+    await runCycle(deps({ state, sources, poster }));
+    expect(posted.map((m) => m.embeds[0]!.title)).toEqual([
+      expect.stringContaining('Alpha'),
+      expect.stringContaining('Bravo')
+    ]);
+    await runCycle(deps({ state, sources, poster }));
+    expect(posted).toHaveLength(2); // once per match, retry or not
+  });
+
+  test('a refreshed known list survives a rollback: it is a cache, not a cursor', async () => {
+    const state = warmState();
+    serverState(state, 's1').knownSweats = ['old'];
+    const known: CycleDeps['sources']['known'] = async (_id, s) => {
+      s.knownSweats = ['new'];
+      s.knownHighKd = ['kd'];
+      s.knownAt = NOW;
+      return [];
+    };
+    await runCycle(
+      deps({
+        state,
+        runKd: true,
+        sources: { kills: async () => [], audit: async () => [adminEvent(1)], known, presence: async () => [] },
+        poster: {
+          post: async () => {
+            throw new Error('discord 500');
+          }
+        }
+      })
+    );
+    const s = serverState(state, 's1');
+    expect(s.lastAuditId).toBe(0);
+    expect([s.knownSweats, s.knownHighKd, s.knownAt]).toEqual([['new'], ['kd'], NOW]);
+  });
+
+  test('joinAlerted is pruned past JOIN_ALERT_HOURS before saving', async () => {
+    const state = warmState();
+    state.joinAlerted = { expired: NOW - 24 * HOUR, fresh: NOW - 24 * HOUR + 1 };
     await runCycle(deps({ state }));
-    expect(state.rateAlerted).toEqual({ 'surge:new': NOW - 6 * day });
-    expect(Object.keys(state.baselines)).toEqual(['s1:new']);
+    expect(state.joinAlerted).toEqual({ fresh: NOW - 24 * HOUR + 1 });
+  });
+
+  test('a failing known source does not stop presence', async () => {
+    const presence = vi.fn(async () => []);
+    await runCycle(
+      deps({
+        state: warmState(),
+        runKd: true,
+        sources: {
+          kills: async () => [],
+          audit: async () => [],
+          known: async () => {
+            throw new Error('board down');
+          },
+          presence
+        }
+      })
+    );
+    expect(presence).toHaveBeenCalledOnce();
   });
 });

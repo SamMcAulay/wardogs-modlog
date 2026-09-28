@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'vitest';
 import { escalate, PING_KINDS, type EscalateConfig } from '../src/escalate.js';
 import { emptyState } from '../src/state.js';
-import type { KillRateEvent, ModEvent, TeamKillEvent } from '../src/events.js';
+import type { HotPlayerEvent, PlayerJoinedEvent, TeamKillEvent } from '../src/events.js';
 
-const cfg: EscalateConfig = { kdCooldownDays: 7, pingOn: new Set(PING_KINDS) };
-const NOW = Date.parse('2026-09-24T12:00:00.000Z');
-const DAY = 86_400_000;
+const cfg: EscalateConfig = { joinAlertHours: 24, pingOn: new Set(PING_KINDS) };
+const NOW = Date.parse('2026-09-27T12:00:00.000Z');
+const HOUR = 3_600_000;
 
 const tk = (eventId: string, eventTime: number, killer = '765'): TeamKillEvent => ({
   kind: 'teamKill',
@@ -20,37 +20,28 @@ const tk = (eventId: string, eventTime: number, killer = '765'): TeamKillEvent =
   count: 0
 });
 
-const kd = (steamId = '765'): ModEvent => ({
-  kind: 'highKd',
+const join = (over: Partial<PlayerJoinedEvent> = {}): PlayerJoinedEvent => ({
+  kind: 'playerJoined',
   serverId: 's1',
-  at: '2026-09-24T12:00:00.000Z',
-  steamId,
-  name: 'Alpha',
-  kd: 5.2,
-  kills: 52,
-  deaths: 10,
-  matches: 9,
-  minutes: 400
-});
-
-const sweat = { perHour: 17, kills: 170, minutes: 600, range: '30d' };
-const surge = {
-  perHour: 21,
-  minutes: 300,
-  usualPerHour: 12,
-  usualMinutes: 6000,
-  ratio: 1.75,
-  range: '7d'
-};
-
-const rate = (over: Partial<KillRateEvent> = {}): KillRateEvent => ({
-  kind: 'killRate',
-  serverId: 's1',
-  at: '2026-09-24T12:00:00.000Z',
+  at: '2026-09-27T12:00:00.000Z',
   steamId: '765',
   name: 'Alpha',
-  sweat,
-  surge: null,
+  watched: false,
+  sweat: false,
+  highKd: false,
+  ...over
+});
+
+const hot = (over: Partial<HotPlayerEvent> = {}): HotPlayerEvent => ({
+  kind: 'hotPlayer',
+  serverId: 's1',
+  at: '2026-09-27T12:00:00.000Z',
+  steamId: '765',
+  name: 'Alpha',
+  kills: 12,
+  deaths: 3,
+  minutes: 30,
+  perHour: 24,
   ...over
 });
 
@@ -85,35 +76,84 @@ describe('team kills', () => {
   });
 });
 
-describe('tiers 1 and 2 never ping', () => {
-  test('a watched join posts without a ping', () => {
-    const out = escalate(
-      [{ kind: 'watchedJoin', serverId: 's1', at: '2026-09-24T12:00:00.000Z', steamId: '9', name: 'W' }],
-      emptyState(),
-      cfg,
-      NOW
-    );
+describe('join alerts', () => {
+  test('a watched-only join posts without a ping and stamps nothing', () => {
+    const state = emptyState();
+    const out = escalate([join({ watched: true })], state, cfg, NOW);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.ping).toBe(false);
+    expect(state.joinAlerted).toEqual({});
+  });
+
+  test('a known join posts without a ping and stamps joinAlerted', () => {
+    const state = emptyState();
+    const out = escalate([join({ sweat: true, highKd: true })], state, cfg, NOW);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.ping).toBe(false);
+    expect(state.joinAlerted['765']).toBe(NOW);
+  });
+
+  test('known tags are dropped within JOIN_ALERT_HOURS; the watched tag never is', () => {
+    const state = emptyState();
+    state.joinAlerted['765'] = NOW - 23 * HOUR;
+    const out = escalate([join({ watched: true, sweat: true, highKd: true })], state, cfg, NOW);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.event).toMatchObject({ watched: true, sweat: false, highKd: false });
+    expect(state.joinAlerted['765']).toBe(NOW - 23 * HOUR); // not re-stamped
+  });
+
+  test('nothing posts when no tag is left', () => {
+    const state = emptyState();
+    state.joinAlerted['765'] = NOW - HOUR;
+    expect(escalate([join({ sweat: true })], state, cfg, NOW)).toEqual([]);
+  });
+
+  test('known tags post again once JOIN_ALERT_HOURS has passed', () => {
+    const state = emptyState();
+    state.joinAlerted['765'] = NOW - 24 * HOUR;
+    const out = escalate([join({ highKd: true })], state, cfg, NOW);
+    expect(out).toHaveLength(1);
+    expect(state.joinAlerted['765']).toBe(NOW);
+  });
+
+  test('the limit is global: a known tag posted on one server is quiet on another', () => {
+    const state = emptyState();
+    escalate([join({ sweat: true })], state, cfg, NOW);
+    expect(escalate([join({ serverId: 's2', sweat: true })], state, cfg, NOW + HOUR)).toEqual([]);
+  });
+
+  test('a join with no tag at all posts nothing', () => {
+    expect(escalate([join()], emptyState(), cfg, NOW)).toEqual([]);
+  });
+});
+
+describe('hot right now', () => {
+  test('pings by default', () => {
+    const out = escalate([hot()], emptyState(), cfg, NOW);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.ping).toBe(true);
+  });
+
+  test('PING_ON=none posts it without a ping', () => {
+    const out = escalate([hot()], emptyState(), { ...cfg, pingOn: new Set() }, NOW);
     expect(out).toHaveLength(1);
     expect(out[0]!.ping).toBe(false);
   });
 
-  test('a K/D flag posts without a ping and starts its cooldown', () => {
-    const state = emptyState();
-    const out = escalate([kd()], state, cfg, NOW);
-    expect(out[0]!.ping).toBe(false);
-    expect(state.kdAlerted['765']).toBe(NOW);
-  });
-
-  test('a K/D re-flag inside the cooldown is dropped', () => {
-    const state = emptyState();
-    state.kdAlerted['765'] = NOW - 2 * DAY;
-    expect(escalate([kd()], state, cfg, NOW)).toHaveLength(0);
-  });
-
-  test('a K/D re-flag after the cooldown posts again', () => {
-    const state = emptyState();
-    state.kdAlerted['765'] = NOW - 8 * DAY;
-    expect(escalate([kd()], state, cfg, NOW)).toHaveLength(1);
+  test('only the hot alert pings: joins, team kills and the rest never do', () => {
+    const out = escalate(
+      [join({ watched: true, sweat: true }), tk('a', 10), tk('b', 20), tk('c', 30), hot()],
+      emptyState(),
+      cfg,
+      NOW
+    );
+    expect(out.map((d) => [d.event.kind, d.ping])).toEqual([
+      ['playerJoined', false],
+      ['teamKill', false],
+      ['teamKill', false],
+      ['teamKill', false],
+      ['hotPlayer', true]
+    ]);
   });
 });
 
@@ -124,14 +164,14 @@ describe('untiered alerts never ping', () => {
         {
           kind: 'adminAction',
           serverId: 's1',
-          at: '2026-09-24T12:00:00.000Z',
+          at: '2026-09-27T12:00:00.000Z',
           auditId: 1,
           action: 'rcon.ban',
           actorName: 'mod',
           target: '765',
           reason: 'griefing'
         },
-        { kind: 'feedQuiet', serverId: 's1', at: '2026-09-24T12:00:00.000Z', lastFeedAt: null }
+        { kind: 'feedQuiet', serverId: 's1', at: '2026-09-27T12:00:00.000Z', lastFeedAt: null }
       ],
       emptyState(),
       cfg,
@@ -141,61 +181,3 @@ describe('untiered alerts never ping', () => {
   });
 });
 
-describe('tier 3: kill rate', () => {
-  test('a sweat pings and starts its own cooldown', () => {
-    const state = emptyState();
-    const out = escalate([rate()], state, cfg, NOW);
-    expect(out[0]!.ping).toBe(true);
-    expect(state.rateAlerted['sweat:765']).toBe(NOW);
-    expect(state.rateAlerted['surge:765']).toBeUndefined();
-  });
-
-  test('a sweat that is also surging is one decision with one ping, both parts stamped', () => {
-    const state = emptyState();
-    const out = escalate([rate({ surge })], state, cfg, NOW);
-    expect(out).toHaveLength(1);
-    expect(out[0]!.ping).toBe(true);
-    expect(state.rateAlerted['sweat:765']).toBe(NOW);
-    expect(state.rateAlerted['surge:765']).toBe(NOW);
-  });
-
-  test('a part still cooling is removed from the event; the other still posts', () => {
-    const state = emptyState();
-    state.rateAlerted['sweat:765'] = NOW - 2 * DAY;
-    const out = escalate([rate({ surge })], state, cfg, NOW);
-    expect(out).toHaveLength(1);
-    const e = out[0]!.event as KillRateEvent;
-    expect(e.sweat).toBeNull();
-    expect(e.surge).toEqual(surge);
-    expect(state.rateAlerted['sweat:765']).toBe(NOW - 2 * DAY);
-  });
-
-  test('both parts cooling posts nothing', () => {
-    const state = emptyState();
-    state.rateAlerted['sweat:765'] = NOW - DAY;
-    state.rateAlerted['surge:765'] = NOW - DAY;
-    expect(escalate([rate({ surge })], state, cfg, NOW)).toHaveLength(0);
-  });
-
-  test('a cooldown past KD_COOLDOWN_DAYS no longer suppresses', () => {
-    const state = emptyState();
-    state.rateAlerted['sweat:765'] = NOW - 8 * DAY;
-    expect(escalate([rate()], state, cfg, NOW)).toHaveLength(1);
-  });
-
-  test('PING_ON=none posts tier 3 without a ping but still stamps the cooldown', () => {
-    const state = emptyState();
-    const off: EscalateConfig = { ...cfg, pingOn: new Set() };
-    const out = escalate([rate()], state, off, NOW);
-    expect(out[0]!.ping).toBe(false);
-    expect(state.rateAlerted['sweat:765']).toBe(NOW);
-  });
-
-  test('PING_ON=surge pings a surge but not a sweat on its own', () => {
-    const onlySurge: EscalateConfig = { ...cfg, pingOn: new Set(['surge'] as const) };
-    const sweatOnly = escalate([rate()], emptyState(), onlySurge, NOW);
-    const both = escalate([rate({ surge })], emptyState(), onlySurge, NOW);
-    expect(sweatOnly[0]!.ping).toBe(false);
-    expect(both[0]!.ping).toBe(true);
-  });
-});

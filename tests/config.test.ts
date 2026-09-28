@@ -19,37 +19,64 @@ describe('loadConfig', () => {
     expect(c.kdMinMatches).toBe(5);
     expect(c.kdMinMinutes).toBe(60);
     expect(c.kdRange).toBe('30d');
-    expect(c.kdCooldownDays).toBe(7);
     expect(c.feedQuietMinutes).toBe(30);
     expect(c.sweatPerHour).toBe(15);
     expect(c.sweatRange).toBe('30d');
-    expect(c.surgeRange).toBe('7d');
-    expect(c.surgePerHour).toBe(10);
-    expect(c.surgeRatio).toBe(1.5);
-    expect(c.surgeHistoryMinutes).toBe(600);
     expect(c.rateMinMinutes).toBe(180);
+    expect(c.livePerHour).toBe(20);
+    expect(c.liveMinMinutes).toBe(20);
+    expect(c.liveMinKills).toBe(8);
+    expect(c.joinAlertHours).toBe(24);
     expect(c.statePath).toBe('/data/state.json');
     expect(c.serverIds).toEqual([]);
     expect(c.serverLabels).toEqual({});
-    expect([...c.pingOn].sort()).toEqual(['surge', 'sweat']);
+    expect([...c.pingOn]).toEqual(['live']);
+  });
+
+  test('the live thresholds and the join limit can be overridden', () => {
+    const c = loadConfig({
+      ...base,
+      LIVE_PER_HOUR: '25',
+      LIVE_MIN_MINUTES: '15',
+      LIVE_MIN_KILLS: '10',
+      JOIN_ALERT_HOURS: '12'
+    });
+    expect([c.livePerHour, c.liveMinMinutes, c.liveMinKills, c.joinAlertHours]).toEqual([25, 15, 10, 12]);
+  });
+
+  test('the removed settings are no longer on Config, and a leftover value is ignored', () => {
+    const c = loadConfig({
+      ...base,
+      KD_COOLDOWN_DAYS: 'junk',
+      SURGE_RANGE: '14d',
+      SURGE_PER_HOUR: 'x',
+      SURGE_RATIO: '-1',
+      SURGE_HISTORY_MINUTES: '0'
+    });
+    for (const key of ['kdCooldownDays', 'surgeRange', 'surgePerHour', 'surgeRatio', 'surgeHistoryMinutes']) {
+      expect(c).not.toHaveProperty(key);
+    }
   });
 
   test('PING_ON=none turns every ping off', () => {
     expect(loadConfig({ ...base, PING_ON: 'none' }).pingOn.size).toBe(0);
   });
 
-  test('PING_ON lists the tier-3 kinds that ping, trimmed', () => {
-    expect([...loadConfig({ ...base, PING_ON: ' surge ' }).pingOn]).toEqual(['surge']);
+  test('PING_ON=live, trimmed, is the default made explicit', () => {
+    expect([...loadConfig({ ...base, PING_ON: ' live ' }).pingOn]).toEqual(['live']);
+    expect([...loadConfig({ ...base, PING_ON: '  ' }).pingOn]).toEqual(['live']);
   });
 
-  test('PING_ON rejects a kind that no longer pings, saying why', () => {
-    expect(() => loadConfig({ ...base, PING_ON: 'watchedJoin' })).toThrow(
-      /PING_ON entry "watchedJoin" no longer pings: only tier-3 alerts \(sweat, surge\)/
-    );
+  test('PING_ON rejects every kind that no longer pings, saying only the live alert does', () => {
+    for (const kind of ['sweat', 'surge', 'teamKill', 'watchedJoin', 'highKd']) {
+      expect(() => loadConfig({ ...base, PING_ON: kind })).toThrow(
+        new RegExp(`PING_ON entry "${kind}" no longer pings: only the live alert \\(live\\) mentions the mod role`)
+      );
+    }
   });
 
   test('PING_ON names an unknown kind in its error', () => {
-    expect(() => loadConfig({ ...base, PING_ON: 'sweat,kicks' })).toThrow(/PING_ON.*"kicks"/);
+    expect(() => loadConfig({ ...base, PING_ON: 'live,kicks' })).toThrow(/PING_ON entry "kicks" is not one of live/);
   });
 
   test('strips trailing slashes from both origins', () => {
@@ -102,15 +129,13 @@ describe('loadConfig', () => {
     );
   });
 
-  test('rate ranges accept the leaderboard ranges', () => {
-    const c = loadConfig({ ...base, SWEAT_RANGE: '90d', SURGE_RANGE: 'all' });
-    expect(c.sweatRange).toBe('90d');
-    expect(c.surgeRange).toBe('all');
+  test('SWEAT_RANGE accepts the leaderboard ranges', () => {
+    expect(loadConfig({ ...base, SWEAT_RANGE: 'all' }).sweatRange).toBe('all');
   });
 
-  test('a rate range the leaderboard does not accept fails at startup, naming the variable', () => {
-    expect(() => loadConfig({ ...base, SURGE_RANGE: '14d' })).toThrow(
-      /SURGE_RANGE must be one of 7d, 30d, 90d, all/
+  test('a sweat range the leaderboard does not accept fails at startup, naming the variable', () => {
+    expect(() => loadConfig({ ...base, SWEAT_RANGE: '14d' })).toThrow(
+      /SWEAT_RANGE must be one of 7d, 30d, 90d, all/
     );
   });
 

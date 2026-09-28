@@ -4,33 +4,41 @@ A Discord bot that watches the Warcon panel across six Wardogs servers and repor
 moderation-relevant events into a staff channel — pinging the mod role when something
 needs a human now, and posting quietly when it is only a record.
 
-Design: `docs/superpowers/specs/2026-09-24-wardogs-modlog-design.md`
+Design: `docs/superpowers/specs/2026-09-24-wardogs-modlog-design.md`, amended by
+`docs/superpowers/specs/2026-09-27-live-alerts-design.md` (which wins where they disagree).
 
 ## What it does
 
-Five sources, polled from Warcon every `POLL_INTERVAL_MS` (K/D and kill-rate hourly), plus a
-feed-health warning:
+Every player alert means **this person is on a server now**. Nothing posts because a list
+was refreshed. Four sources are polled from Warcon every `POLL_INTERVAL_MS` (the known-player
+lists refresh hourly), plus a feed-health warning:
 
-| Tier | Alert | Colour | Pings the mod role? |
-| --- | --- | --- | --- |
-| 1 | Watched player joins a server | blue | no |
-| 2 | High K/D (K/D ≥ `KD_THRESHOLD` over `KD_RANGE`) | orange | no |
-| 3 | **Sweat**: `SWEAT_PER_HOUR`+ kills an hour over `SWEAT_RANGE` | red | yes |
-| 3 | **Surge**: last `SURGE_RANGE` at least `SURGE_RATIO`× their own usual rate on that server | red | yes |
-| — | Team kill (with the killer's running count this match) | purple | no |
-| — | Kick, ban, unban by an admin | grey | no |
-| — | Feed quiet: a configured kill feed silent for `FEED_QUIET_MINUTES` with players on | brown | no |
+| Tier | Alert | When | Colour | Pings the mod role? |
+| --- | --- | --- | --- | --- |
+| 1 | **Watched player joined** | on connect, every time | blue | no |
+| 2 | **Known sweat / high K/D joined** | on connect, at most once per `JOIN_ALERT_HOURS` per player | orange | no |
+| 3 | **Hot right now**: `LIVE_PER_HOUR`+ kills an hour this match, over at least `LIVE_MIN_MINUTES` and `LIVE_MIN_KILLS` | during a match, once per player per match | red | yes, unless `PING_ON=none` |
+| — | Team kill (with the killer's running count this match) | | purple | no |
+| — | Kick, ban, unban by an admin | | grey | no |
+| — | Feed quiet: a configured kill feed silent for `FEED_QUIET_MINUTES` with players on | | brown | no |
 
-Each tiered alert names its tier in a footer. A player who is both a sweat and surging gets
-one alert, and one ping. Sweats and surges come from the scoreboard, like K/D, so they don't
-need the kill feed. `PING_ON` chooses which tier-3 alerts ping: `sweat`, `surge`, or `none`
-(the default is both).
+Each tiered alert names its tier in a footer. A player who joins carrying more than one tag
+gets **one** alert listing every tag, at the highest tier they reach: `Joined — Alpha` with
+tags `watched · sweat` is tier 2.
 
-A sweat's kills an hour is the panel's own figure, with seeding time left out, so it matches
-the leaderboard. A surge compares rates with seeding left **in**, because a player's usual
-rate (from their dossier) includes it and the panel doesn't say how much of it was seeding.
-The known cost: a player who seeded a lot in the past and little this week can read as a mild
-surge. The surge's figure is labelled `Recent kills/hour` to keep the two apart.
+**Known players.** Every `KD_POLL_INTERVAL_MS` (hourly) the bot refreshes two lists per server
+and keeps them in its state without posting them: **sweats** (`SWEAT_PER_HOUR`+ kills an hour
+over `SWEAT_RANGE` with `RATE_MIN_MINUTES` played, seeding time left out, matching the panel's
+own figure) and **high K/Ds** (`KD_THRESHOLD`+ over `KD_RANGE`, with `KD_MIN_MATCHES` and
+`KD_MIN_MINUTES`; zero deaths is not infinite). A join is tagged from these lists and the
+watchlist. The sweat and high-K/D tags post at most once per `JOIN_ALERT_HOURS` per player
+(across all servers); the watched tag alerts on every connect.
+
+**Hot right now.** Each cycle the bot reads every player's kills in the current match and the
+match clock from the server summary, and times each player from when it first saw them in
+the match. Players already on when it first observes a match (a fresh boot, a new server, a
+new map) are timed from the start of the match, so a rate is never overstated. A server that
+reports no match clock (idle, or an older build) gets no live check.
 
 Chat is out of scope: the game's feed carries no chat events at all, and Warcon's
 `/v1` surface has no chat-read route, so there is no source to read.
@@ -134,36 +142,38 @@ this, since server labels are things like `EU#1` and `NA#3`.
 | `DISCORD_MOD_ROLE_ID` | The role mentioned on escalation |
 | `SERVER_IDS` | Comma-separated Warcon server ids to watch; required — the bot refuses to start empty |
 | `SERVER_LABELS` | Comma-separated `serverId=Label` pairs; every alert is prefixed with its label (or the id's first 8 characters if unlisted) |
-| `POLL_INTERVAL_MS` | How often each server is polled for kills, audit and watchlist (default `30000`) |
-| `KD_POLL_INTERVAL_MS` | How often the K/D leaderboard is polled, and sweats and surges with it (default `3600000`) |
+| `POLL_INTERVAL_MS` | How often each server is polled for kills, audit, joins and the live check (default `30000`) |
+| `KD_POLL_INTERVAL_MS` | How often the known sweat and high-K/D lists are refreshed (default `3600000`) |
 | `REQUEST_TIMEOUT_MS` | Per-request timeout to Warcon (default `10000`) |
 | `STATE_PATH` | Where cursor/state JSON is written (default `/data/state.json`) |
-| `PING_ON` | Tier-3 alerts that mention the mod role: `sweat`, `surge`, or `none` (default: both) |
-| `KD_THRESHOLD` | K/D at or above which a player is flagged (default `4.0`) |
-| `KD_MIN_MATCHES` | Minimum matches before a K/D flag counts (default `5`) |
+| `PING_ON` | `live` (the default, when unset or blank): the hot-right-now alert mentions the mod role. `none`: nothing does. Any other value fails at startup |
+| `KD_THRESHOLD` | K/D at or above which a player is a known high K/D (default `4.0`) |
+| `KD_MIN_MATCHES` | Minimum matches before a high K/D counts (default `5`) |
 | `KD_MIN_MINUTES` | Minimum playtime floor passed to the leaderboard query (default `60`) |
 | `KD_RANGE` | Leaderboard lookback window: `7d`, `30d`, `90d` or `all` (default `30d`) |
-| `SWEAT_PER_HOUR` | Kills an hour that marks a sweat (default `15`) |
+| `SWEAT_PER_HOUR` | Kills an hour that marks a known sweat (default `15`) |
 | `SWEAT_RANGE` | Period a sweat's rate is measured over: `7d`, `30d`, `90d` or `all` (default `30d`) |
-| `SURGE_RANGE` | Recent period compared with a player's usual rate (default `7d`) |
-| `SURGE_PER_HOUR` | Minimum recent kills an hour for a surge (default `10`) |
-| `SURGE_RATIO` | How many times their usual rate counts as a surge (default `1.5`) |
-| `SURGE_HISTORY_MINUTES` | Playtime on a server before a player can surge there (default `600`) |
-| `RATE_MIN_MINUTES` | Playtime needed inside each range for sweats and surges (default `180`) |
-| `KD_COOLDOWN_DAYS` | Days before the same player can be flagged again for K/D, sweat or surge (each tracked separately) (default `7`) |
+| `RATE_MIN_MINUTES` | Playtime needed inside `SWEAT_RANGE` to count as a sweat (default `180`) |
+| `JOIN_ALERT_HOURS` | Hours before a player's sweat / high-K/D tags can post on a join again (default `24`) |
+| `LIVE_PER_HOUR` | Kills an hour this match that makes a player hot (default `20`) |
+| `LIVE_MIN_MINUTES` | Minutes the bot must have seen them in the match first (default `20`) |
+| `LIVE_MIN_KILLS` | Kills this match needed as well (default `8`) |
 | `FEED_QUIET_MINUTES` | Minutes a configured feed can go quiet, with players on, before a health warning posts (default `30`) |
 
-## Upgrading to tiered alerts
+## Upgrading to live alerts
 
-The first hourly kill-rate run posts every current sweat once, as K/D always has. Production
-runs with `PING_ON=none`, so that batch cannot ping. After deploying:
-
-1. Let the first hourly run finish posting — watch the logs — before restarting the bot or
-   changing `.env`.
-2. Then remove `PING_ON=none` to turn tier-3 pings on.
-
-`TEAM_KILL_PING_AT` can be deleted from `.env`: team kills no longer ping, and the value is
-ignored.
+- The hourly sweat, high-K/D and surge posts are gone. Their settings — `KD_COOLDOWN_DAYS`,
+  `SURGE_RANGE`, `SURGE_PER_HOUR`, `SURGE_RATIO` and `SURGE_HISTORY_MINUTES` — can be deleted
+  from `.env`; a leftover value is ignored.
+- `PING_ON` now takes `live` or `none`. Production's `PING_ON=none` can stay while the new
+  alerts settle; remove it to get tier-3 pings. An old value such as `sweat,surge` fails at
+  startup (and so fails the deploy's preflight) with a message saying only the live alert pings.
+- The state file upgrades itself: the old cooldowns and dossier cache are dropped, and warm
+  servers stay warm, so players already on a server are not reported as joining.
+- The known lists load on the bot's first cycle after it starts (and are retried every cycle
+  until they load). Until then, joins carry only the watched tag.
+- Preflight now reports a `live data` line per server: `live check active`, or `no match
+  clock` for a server that is empty or doesn't report one. Neither fails a deploy.
 
 ## Adding a server
 
@@ -177,7 +187,7 @@ the server either stays silent or preflight fails:
    config but has no access to it on the panel.
 
 Once all three are done, its events carry its label the same way every other
-server's do, for example an escalating team kill: `NA#3 · Team kill — Alpha (3)`.
+server's do, for example a hot player: `NA#3 · Hot right now — Alpha`.
 
 A newly added server starts cold, as the first boot does. On its first clean cycle it
 records its position and reports nothing from before, so its history never floods the

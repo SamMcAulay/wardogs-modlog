@@ -32,12 +32,12 @@ describe('state', () => {
     serverState(s, 's1').lastAuditId = 99;
     serverState(s, 's1').warm = true;
     serverState(s, 's2'); // seen, but never completed a clean cycle
-    s.kdAlerted['765'] = 1234;
+    s.joinAlerted['765'] = 1234;
     await saveState(path, s);
 
     const back = await loadState(path);
     expect(back.servers.s1?.lastAuditId).toBe(99);
-    expect(back.kdAlerted['765']).toBe(1234);
+    expect(back.joinAlerted['765']).toBe(1234);
     // Warmth is per server and persisted: a restart keeps a cold server cold (spec §7).
     expect(back.servers.s1?.warm).toBe(true);
     expect(back.servers.s2?.warm).toBe(false);
@@ -100,36 +100,61 @@ describe('state', () => {
   });
 });
 
-describe('rate-alert state', () => {
-  test('a fresh state has empty rate cooldowns and baselines', () => {
+describe('live-alert state', () => {
+  test('a fresh state has no join stamps, and a fresh server entry has empty match and known lists', () => {
     const s = emptyState();
-    expect(s.rateAlerted).toEqual({});
-    expect(s.baselines).toEqual({});
+    expect(s.joinAlerted).toEqual({});
+    const e = serverState(s, 's1');
+    expect(e.match).toEqual({ lastMatchSeconds: null, firstSeen: {}, alerted: [] });
+    expect(e.knownSweats).toEqual([]);
+    expect(e.knownHighKd).toEqual([]);
+    expect(e.knownAt).toBeNull();
   });
 
-  test('a state file written before rate alerts loads with both empty', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'modlog-state-'));
+  test('an old file with kdAlerted, rateAlerted and baselines loads with them dropped and the new fields defaulted', async () => {
     const path = join(dir, 'state.json');
     await writeFile(
       path,
-      JSON.stringify({ version: 1, servers: {}, kdAlerted: { '765': 1 }, startedAt: 1 }),
+      JSON.stringify({
+        version: 1,
+        servers: { s1: { lastAuditId: 4, presentSteamIds: ['765'], warm: true } },
+        kdAlerted: { '765': 1 },
+        rateAlerted: { 'sweat:765': 2 },
+        baselines: { 's1:765': { perHour: 1, minutes: 1, at: 1 } },
+        startedAt: 1
+      }),
       'utf8'
     );
     const s = await loadState(path);
-    expect(s.rateAlerted).toEqual({});
-    expect(s.baselines).toEqual({});
-    expect(s.kdAlerted).toEqual({ '765': 1 });
+    expect(s).not.toHaveProperty('kdAlerted');
+    expect(s).not.toHaveProperty('rateAlerted');
+    expect(s).not.toHaveProperty('baselines');
+    expect(s.joinAlerted).toEqual({});
+    const e = s.servers.s1!;
+    expect(e.match).toEqual({ lastMatchSeconds: null, firstSeen: {}, alerted: [] });
+    expect(e.knownSweats).toEqual([]);
+    expect(e.knownHighKd).toEqual([]);
+    expect(e.knownAt).toBeNull();
+    // Warm servers stay warm, with their roster, so nobody already on is reported joining.
+    expect(e.warm).toBe(true);
+    expect(e.presentSteamIds).toEqual(['765']);
   });
 
-  test('rate cooldowns and baselines survive a save and load', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'modlog-state-'));
+  test('join stamps, match state and known lists survive a save and load', async () => {
     const path = join(dir, 'state.json');
     const s = emptyState();
-    s.rateAlerted['sweat:765'] = 42;
-    s.baselines['s1:765'] = { perHour: 12.5, minutes: 900, at: 7 };
+    s.joinAlerted['765'] = 42;
+    const e = serverState(s, 's1');
+    e.match = { lastMatchSeconds: 600, firstSeen: { '765': 0, '766': 300 }, alerted: ['765'] };
+    e.knownSweats = ['765'];
+    e.knownHighKd = ['766'];
+    e.knownAt = 7;
     await saveState(path, s);
     const back = await loadState(path);
-    expect(back.rateAlerted).toEqual({ 'sweat:765': 42 });
-    expect(back.baselines).toEqual({ 's1:765': { perHour: 12.5, minutes: 900, at: 7 } });
+    expect(back.joinAlerted).toEqual({ '765': 42 });
+    expect(back.servers.s1!.match).toEqual(e.match);
+    expect(back.servers.s1!.knownSweats).toEqual(['765']);
+    expect(back.servers.s1!.knownHighKd).toEqual(['766']);
+    expect(back.servers.s1!.knownAt).toBe(7);
   });
 });

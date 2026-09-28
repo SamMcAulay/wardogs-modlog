@@ -1,4 +1,4 @@
-// Serves the four endpoints the modlog bot reads, so it can be exercised without
+// Serves the endpoints the modlog bot reads, so it can be exercised without
 // panel access. Mirrors WDstats' scripts/mock-warcon.mjs in spirit.
 import { createServer } from 'node:http';
 
@@ -6,6 +6,7 @@ const PORT = Number(process.env.MOCK_PORT ?? 8788);
 
 let auditId = 0;
 let killSeq = 0;
+const startedAt = Date.now();
 
 const json = (res, body) => {
   res.writeHead(200, { 'content-type': 'application/json' });
@@ -74,15 +75,20 @@ createServer((req, res) => {
 
   if (p.endsWith('/summary')) {
     const serverId = serverIdFromPath(p);
+    // A match already 30 minutes in when the mock starts, running on from there. The
+    // bot first sees everyone at clock 0 of its first observation, so Alpha's 15 kills
+    // are 30 an hour over 30 minutes: hot enough for the live alert (live-alerts §3).
+    const matchSeconds = 1800 + Math.floor((Date.now() - startedAt) / 1000);
     return json(res, {
       ok: true,
       live: {
         serverId,
         ok: true,
-        status: { serverName: `Mock ${serverId.slice(0, 8)}` },
+        status: { serverName: `Mock ${serverId.slice(0, 8)}`, matchSeconds },
         players: [
-          { steamId: '76561190000000001', name: 'Alpha', faction: 'Valkyra' },
-          { steamId: '76561190000000003', name: 'Charlie', faction: 'Lonestar' }
+          { steamId: '76561190000000001', name: 'Alpha', faction: 'Valkyra', kills: 15, deaths: 4, cash: 1200, ping: 38 },
+          { steamId: '76561190000000003', name: 'Charlie', faction: 'Lonestar', kills: 2, deaths: 6, cash: 300, ping: 52 },
+          { steamId: '76561190000000004', name: 'Delta', faction: 'Lonestar', kills: 5, deaths: 3, cash: 800, ping: 45 }
         ]
       }
     });
@@ -102,23 +108,12 @@ createServer((req, res) => {
     });
   }
 
-  const dossier = /\/players\/(\d+)$/.exec(p);
-  if (dossier) {
-    const serverId = p.split('/')[3];
-    return json(res, {
-      ok: true,
-      // Delta's usual is 8/hour over 100 hours, so the mock's 18/hour is also a surge.
-      dossier: {
-        perServer: [{ serverId, minutes: 6000, kills: dossier[1].endsWith('4') ? 800 : 100, deaths: 50 }]
-      }
-    });
-  }
-
   if (p.endsWith('/leaderboard')) {
     return json(res, {
       ok: true,
       // Warcon echoes the query it ran; preflight checks the sort survived.
       query: { sort: url.searchParams.get('sort') ?? 'kd' },
+      // Alpha's K/D (5.2) makes him a known high K/D; Delta (18/hour, K/D 15) is both.
       rows: [
         { steamId: '76561190000000001', name: 'Alpha', minutes: 400, kills: 52, deaths: 10, matches: 9 },
         { steamId: '76561190000000002', name: 'Bravo', minutes: 300, kills: 20, deaths: 20, matches: 8 },
