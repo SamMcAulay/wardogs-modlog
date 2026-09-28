@@ -62,7 +62,15 @@ rules are chosen so the bot never *overstates* a rate:
   fresh boot, a server newly added, and the first cycle after a match boundary. The bot can't
   know when they joined, so it assumes the start of the match. That makes their time longer and
   their rate lower.
-- **Players who appear later in the same match** get the match clock at that cycle.
+- **Players who appear later in the same match** get the match clock of the *previous*
+  observation (amended 2026-09-28). They joined some time after it, and their scoreboard kills
+  cover their whole stay. So a gap in observation (an outage, a restart, a run of failed reads)
+  can only lengthen their time, never shorten it.
+- **A summary with no live data, or one the panel marks failed,** changes nothing: not the
+  roster and not the match. An empty roster would re-report everyone as joining on the next
+  good read.
+- **Lists that have never loaded** (`knownAt` null) are refreshed every cycle until they load,
+  not only on the K/D schedule.
 - **A reconnect mid-match keeps the original `firstSeen`.** The scoreboard may reset their kills,
   which again only lowers the rate.
 

@@ -149,16 +149,29 @@ describe('runCycle', () => {
     expect(order).toEqual(['kills', 'audit', 'known', 'presence']);
   });
 
-  test('the known source only runs on the K/D schedule; presence runs every cycle', async () => {
+  test('once loaded, the known lists refresh only on the K/D schedule; presence runs every cycle', async () => {
+    const state = emptyState();
+    serverState(state, 's1').knownAt = NOW - 60_000;
     const known = vi.fn(async () => []);
     const presence = vi.fn(async () => []);
     const sources = { kills: async () => [], audit: async () => [], known, presence };
-    await runCycle(deps({ runKd: false, sources }));
+    await runCycle(deps({ state, runKd: false, sources }));
     expect(known).not.toHaveBeenCalled();
     expect(presence).toHaveBeenCalledOnce();
-    await runCycle(deps({ runKd: true, sources }));
+    await runCycle(deps({ state, runKd: true, sources }));
     expect(known).toHaveBeenCalledOnce();
     expect(presence).toHaveBeenCalledTimes(2);
+  });
+
+  test('lists that have never loaded are retried every cycle, not left empty for an hour', async () => {
+    const state = emptyState();
+    const known = vi.fn(async () => {
+      throw new Error('board down');
+    });
+    const sources = { kills: async () => [], audit: async () => [], known, presence: async () => [] };
+    await runCycle(deps({ state, runKd: true, sources }));
+    await runCycle(deps({ state, runKd: false, sources }));
+    expect(known).toHaveBeenCalledTimes(2);
   });
 
   test('a cold start records position and posts nothing', async () => {

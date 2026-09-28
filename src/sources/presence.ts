@@ -32,12 +32,16 @@ export async function pollPresence(
 ): Promise<ModEvent[]> {
   const id = encodeURIComponent(serverId);
   const summary = await client.getJson<SummaryBody>(`/api/servers/${id}/summary`);
-  const players = summary.live?.players ?? [];
+  // No live data, or a live read the panel itself marks failed, says nothing about who is
+  // on the server. Treating it as an empty roster would re-report everyone as joining on
+  // the next good read, so leave the roster and the match exactly as they were.
+  if (!summary.live || !summary.live.ok) return [];
+  const players = summary.live.players ?? [];
   const at = new Date(now).toISOString();
 
   const joins = await joinEvents(client, serverId, s, players, at);
 
-  const clock = summary.live?.status?.matchSeconds;
+  const clock = summary.live.status?.matchSeconds;
   let hot: HotPlayerEvent[] = [];
   if (typeof clock === 'number' && Number.isFinite(clock)) {
     const next = advanceMatch(s.match, players, clock);
@@ -102,9 +106,14 @@ function advanceMatch(m: MatchState, players: SummaryPlayer[], clock: number): M
   const newMatch = m.lastMatchSeconds !== null && clock < m.lastMatchSeconds;
   const firstObservation = m.lastMatchSeconds === null || newMatch;
   const firstSeen = newMatch ? {} : { ...m.firstSeen };
+  // A newcomer in a match already observed joined some time after the last observation,
+  // and their scoreboard kills cover their whole stay. Dating them from that observation,
+  // not from now, keeps a gap (an outage, a restart, a run of failed reads) from
+  // shortening their time and overstating their rate.
+  const joinedBy = firstObservation ? 0 : (m.lastMatchSeconds ?? clock);
   for (const p of players) {
     // A reconnect keeps its original firstSeen.
-    if (!(p.steamId in firstSeen)) firstSeen[p.steamId] = firstObservation ? 0 : clock;
+    if (!(p.steamId in firstSeen)) firstSeen[p.steamId] = joinedBy;
   }
   return { lastMatchSeconds: clock, firstSeen, alerted: newMatch ? [] : [...m.alerted] };
 }

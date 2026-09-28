@@ -130,7 +130,12 @@ async function runServer(deps: CycleDeps, serverId: string): Promise<void> {
   await run('audit', () => deps.sources.audit(serverId, s));
   // known before presence, so a freshly refreshed list tags this same cycle's joins
   // (live-alerts spec §6).
-  if (deps.runKd) await run('known', () => deps.sources.known(serverId, s), false);
+  // Lists that have never loaded (knownAt null) are retried every cycle rather than
+  // waiting out the K/D interval, so one failed first refresh doesn't leave tier-2 joins
+  // dark for an hour.
+  if (deps.runKd || s.knownAt === null) {
+    await run('known', () => deps.sources.known(serverId, s), false);
+  }
   await run('presence', () => deps.sources.presence(serverId, s));
 
   if (!warm) {

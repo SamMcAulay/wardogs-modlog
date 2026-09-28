@@ -76,11 +76,13 @@ describe('when a player was first seen in the match', () => {
     expect(s.match).toEqual({ lastMatchSeconds: 900, firstSeen: { a: 0, b: 0 }, alerted: [] });
   });
 
-  test('a player who appears later in the same match gets the match clock at that cycle', async () => {
+  test('a player who appears later in the same match gets the last observed clock', async () => {
+    // They joined some time after the previous observation; dating them from it can only
+    // make their time longer and their rate lower.
     const s = warm();
     await run(s, summaryOf([{ steamId: 'a' }], 900));
     await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b' }], 930));
-    expect(s.match.firstSeen).toEqual({ a: 0, b: 930 });
+    expect(s.match.firstSeen).toEqual({ a: 0, b: 900 });
     expect(s.match.lastMatchSeconds).toBe(930);
   });
 
@@ -90,7 +92,7 @@ describe('when a player was first seen in the match', () => {
     await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b' }], 600));
     await run(s, summaryOf([{ steamId: 'a' }], 900)); // b leaves
     await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b' }], 1200)); // b is back
-    expect(s.match.firstSeen['b']).toBe(600);
+    expect(s.match.firstSeen['b']).toBe(300);
   });
 
   test('a cold server still records the match, so its first warm cycle is not a first observation', async () => {
@@ -99,7 +101,7 @@ describe('when a player was first seen in the match', () => {
     expect(s.match.firstSeen).toEqual({ a: 0 });
     s.warm = true;
     await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b' }], 330));
-    expect(s.match.firstSeen).toEqual({ a: 0, b: 330 });
+    expect(s.match.firstSeen).toEqual({ a: 0, b: 300 });
   });
 });
 
@@ -148,12 +150,25 @@ describe('hot right now', () => {
   test('time is counted from firstSeen, not from the start of the match', async () => {
     const s = warm();
     await run(s, summaryOf([{ steamId: 'a' }], 600));
-    // b is first seen at 1200. At 1800 that is only 10 minutes (60 an hour from the
-    // match start would read hot); at 2400 it is 20 minutes, and 10 kills is 30 an hour.
+    // b appears at 1200, so is dated from the last observation, 600. At 1500 that is 15
+    // minutes (60 an hour from the match start would read hot); at 1800 it is 20
+    // minutes, and 10 kills is 30 an hour.
     await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b', kills: 10 }], 1200));
-    expect(hots(await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b', kills: 10 }], 1800)))).toEqual([]);
-    const events = await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b', kills: 10 }], 2400));
+    expect(hots(await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b', kills: 10 }], 1500)))).toEqual([]);
+    const events = await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b', kills: 10 }], 1800));
     expect(hots(events).map((e) => [e.steamId, e.minutes, e.perHour])).toEqual([['b', 20, 30]]);
+  });
+
+  test('a gap in observation cannot make a newcomer read hot', async () => {
+    // Last seen at 600; the panel was unreachable until 2400. c joined somewhere in that
+    // gap and already has 9 kills. Dated from 2400, c would need only 2 more kills in
+    // 20 minutes to read 33 an hour; dated from 600, at 3600 c's 11 kills over 50 minutes
+    // is 13 an hour — correctly not hot.
+    const s = warm();
+    await run(s, summaryOf([{ steamId: 'a' }], 600));
+    await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'c', kills: 9 }], 2400));
+    expect(s.match.firstSeen['c']).toBe(600);
+    expect(hots(await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'c', kills: 11 }], 3600)))).toEqual([]);
   });
 
   test('a player posts once per match', async () => {
@@ -186,14 +201,23 @@ describe('hot right now', () => {
     expect(s.match).toEqual(before);
   });
 
-  test('a server with no live data skips the live check and empties the roster', async () => {
+  test('a summary with no live data changes nothing, so players are not re-reported as joining', async () => {
     const s = warm({ presentSteamIds: ['a'] });
     await run(s, summaryOf([{ steamId: 'a' }], 600));
     const before = structuredClone(s.match);
-    const events = await run(s, { ok: true, live: null });
+    const events = await run(s, { ok: true, live: null }, ['a']);
     expect(events).toEqual([]);
-    expect(s.presentSteamIds).toEqual([]);
+    expect(s.presentSteamIds).toEqual(['a']);
     expect(s.match).toEqual(before);
+    // The next good read still sees a, already present: not a join.
+    expect(joins(await run(s, summaryOf([{ steamId: 'a' }], 630), ['a']))).toEqual([]);
+  });
+
+  test('a summary whose live read failed changes nothing either', async () => {
+    const s = warm({ presentSteamIds: ['a'] });
+    const failed: SummaryBody = { ok: true, live: { serverId: 's1', ok: false, status: null, players: [] } };
+    expect(await run(s, failed, ['a'])).toEqual([]);
+    expect(s.presentSteamIds).toEqual(['a']);
   });
 
   test('a cold server posts no hot player and does not mark one alerted', async () => {
