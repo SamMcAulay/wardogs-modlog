@@ -388,3 +388,45 @@ describe('the Kick button', () => {
     expect(msg({ kind: 'feedQuiet', serverId: 's1', at, lastFeedAt: null }).components).toBeUndefined();
   });
 });
+
+describe('watch reason on joins', () => {
+  const join = (over: Partial<import('../src/events.js').PlayerJoinedEvent>) =>
+    buildMessage(
+      {
+        ping: false,
+        event: {
+          kind: 'playerJoined', serverId: 's1', at: '2026-09-27T12:00:00.000Z', steamId: '765',
+          name: 'Alpha', watched: true, sweat: false, highKd: false, ...over
+        }
+      },
+      links,
+      ROLE
+    ).embeds[0]!;
+
+  test('a watched join shows why they are watched, straight after the tags', () => {
+    const e = join({ watchReason: 'aimbot suspicion' });
+    expect(e.fields![1]).toEqual({ name: 'Watch reason', value: 'aimbot suspicion', inline: false });
+    expect(e.description).toBeUndefined();
+  });
+
+  test('without a reason on record it still points at the dossier', () => {
+    const e = join({});
+    expect(e.fields!.map((f) => f.name)).not.toContain('Watch reason');
+    expect(e.description).toMatch(/dossier/);
+  });
+});
+
+describe('the Watch button', () => {
+  const at = '2026-09-27T12:00:00.000Z';
+  const labels = (event: import('../src/events.js').ModEvent) =>
+    buildMessage({ event, ping: false }, links, ROLE).components?.[0]?.components.map((b) => b.label);
+
+  test('sits beside Kick on alerts about a player who may not be watched yet', () => {
+    expect(labels({ kind: 'playerJoined', serverId: 's1', at, steamId: '76561198000000001', name: 'A', watched: false, sweat: true, highKd: false })).toEqual(['Kick', 'Watch']);
+    expect(labels({ kind: 'hotPlayer', serverId: 's1', at, steamId: '76561198000000002', name: 'B', kills: 10, deaths: 1, minutes: 20, perHour: 30 })).toEqual(['Kick', 'Watch']);
+  });
+
+  test('a join by someone already on the watchlist offers Kick only', () => {
+    expect(labels({ kind: 'playerJoined', serverId: 's1', at, steamId: '76561198000000001', name: 'A', watched: true, sweat: false, highKd: false })).toEqual(['Kick']);
+  });
+});

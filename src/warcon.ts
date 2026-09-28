@@ -86,12 +86,12 @@ export class WarconClient {
   }
 
   /**
-   * POST a panel action (e.g. `/api/servers/{id}/rcon/kick`). Unlike `getJson`, a refusal
+   * POST (or PUT) a panel action (e.g. `/api/servers/{id}/rcon/kick`). Unlike `getJson`, a refusal
    * or a network failure resolves with a message instead of throwing: the caller shows it
    * to a person, and Warcon's own wording ("not on the server", "needs Kick, kill, move")
    * says more than a status code.
    */
-  async postAction(path: string, body: unknown): Promise<PostResult> {
+  async postAction(path: string, body: unknown, method: 'POST' | 'PUT' = 'POST'): Promise<PostResult> {
     const doFetch = this.opts.fetchImpl ?? fetch;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.opts.timeoutMs ?? 10_000);
@@ -99,7 +99,7 @@ export class WarconClient {
     let res: Response;
     try {
       res = await doFetch(`${this.opts.baseUrl}${path}`, {
-        method: 'POST',
+        method,
         headers: { ...this.headers(), 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         redirect: 'manual',

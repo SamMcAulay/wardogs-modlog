@@ -155,4 +155,17 @@ describe('WarconClient.postAction', () => {
       message: 'fetch failed'
     });
   });
+
+  test('sends PUT when asked', async () => {
+    let method = '';
+    const client = new WarconClient({
+      ...opts,
+      fetchImpl: async (_url, init) => {
+        method = init?.method ?? '';
+        return reply({ ok: true });
+      }
+    });
+    await client.postAction('/api/servers/s1/players/765/watch', { watched: true }, 'PUT');
+    expect(method).toBe('PUT');
+  });
 });

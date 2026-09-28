@@ -1,7 +1,7 @@
 import { REST } from '@discordjs/rest';
 import { Routes } from 'discord-api-types/v10';
 import type { Decision, ModEvent, PlayerJoinedEvent } from './events.js';
-import { kickRow, type ActionRow, type ButtonComponent } from './kick.js';
+import { actionRow, type ActionRow, type ButtonComponent } from './player-actions.js';
 
 export interface LinkConfig {
   /** the origin a mod's browser opens — never WARCON_BASE_URL */
@@ -34,11 +34,11 @@ export interface DiscordMessage {
   content?: string;
   embeds: Embed[];
   allowed_mentions: { parse: []; roles?: string[] };
-  /** the Kick button, on alerts about one player who may be on the server */
+  /** the Kick and Watch buttons, on alerts about one player who may be on the server */
   components?: ActionRow<ButtonComponent>[];
 }
 
-/** The player a Kick button would act on, or null for alerts that aren't about one. */
+/** The player the Kick and Watch buttons would act on, or null for alerts that aren't about one. */
 function kickTarget(e: ModEvent): string | null {
   switch (e.kind) {
     case 'playerJoined':
@@ -155,9 +155,15 @@ function embedFor(e: ModEvent, links: LinkConfig): Embed {
         url: `${base}/players/${encodeURIComponent(e.steamId)}`,
         color: known ? COLOR.tier2 : COLOR.tier1,
         timestamp: e.at,
-        // The reason needs players.notes, which this key does not hold (spec §5.3).
-        ...(e.watched ? { description: 'Open the dossier for the watch reason.' } : {}),
-        fields: [field('Tags', joinTags(e)), ...joinStatFields(e), field('Steam ID', e.steamId)],
+        // The reason is readable when the key holds Notes & watchlist; without one on
+        // record (or without that permission) point at the dossier instead.
+        ...(e.watched && !e.watchReason ? { description: 'Open the dossier for the watch reason.' } : {}),
+        fields: [
+          field('Tags', joinTags(e)),
+          ...(e.watched && e.watchReason ? [field('Watch reason', e.watchReason, false)] : []),
+          ...joinStatFields(e),
+          field('Steam ID', e.steamId)
+        ],
         footer: { text: known ? 'Tier 2 · known player' : 'Tier 1 · watchlist' }
       };
     }
@@ -187,7 +193,11 @@ export function buildMessage(
   const label = serverLabel(d.event.serverId, links.serverLabels);
   embed.title = clamp(`${label} · ${embed.title ?? ''}`, 256);
   const target = kickTarget(d.event);
-  const components = target ? { components: [kickRow(d.event.serverId, target)] } : {};
+  // No Watch button for someone the alert already says is watched.
+  const alreadyWatched = d.event.kind === 'playerJoined' && d.event.watched;
+  const components = target
+    ? { components: [actionRow(d.event.serverId, target, { watch: !alreadyWatched })] }
+    : {};
   return d.ping
     ? {
         content: `<@&${modRoleId}> **${label}**`,
