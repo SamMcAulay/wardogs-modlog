@@ -256,6 +256,20 @@ describe('join alerts', () => {
     expect(joins(events)[0]).toMatchObject({ serverId: 's1', name: 'Pa', at: new Date(NOW).toISOString() });
   });
 
+  test("a known player's join carries the numbers that put them on the list", async () => {
+    const sweat = { perHour: 18, kills: 180, minutes: 600, range: '30d' };
+    const highKd = { kd: 5.2, kills: 52, deaths: 10, matches: 9, range: '30d' };
+    const s = warm({ knownSweats: ['a'], knownHighKd: ['a'], knownStats: { a: { sweat, highKd } } });
+    const [e] = joins(await run(s, summaryOf([{ steamId: 'a' }])));
+    expect(e).toMatchObject({ sweat: true, highKd: true, sweatStats: sweat, highKdStats: highKd });
+  });
+
+  test('a watched-only join carries no numbers', async () => {
+    const [e] = joins(await run(warm(), summaryOf([{ steamId: 'c' }]), ['c']));
+    expect(e!.sweatStats).toBeUndefined();
+    expect(e!.highKdStats).toBeUndefined();
+  });
+
   test('a joiner with no tag posts nothing', async () => {
     expect(await run(warm(), summaryOf([{ steamId: 'e' }]))).toEqual([]);
   });

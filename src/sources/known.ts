@@ -44,6 +44,26 @@ export async function pollKnown(
   const highKd = await highKdRows(client, serverId, cfg);
   s.knownSweats = sweats.map((r) => r.steamId);
   s.knownHighKd = highKd.map((r) => r.steamId);
+  // The numbers behind each listing, so a join alert can show why the player is known.
+  const stats: ServerState['knownStats'] = {};
+  for (const r of sweats) {
+    stats[r.steamId] = {
+      sweat: { perHour: panelRate(r), kills: r.kills, minutes: r.minutes, range: cfg.sweatRange }
+    };
+  }
+  for (const r of highKd) {
+    stats[r.steamId] = {
+      ...stats[r.steamId],
+      highKd: {
+        kd: r.kills / r.deaths,
+        kills: r.kills,
+        deaths: r.deaths,
+        matches: r.matches,
+        range: cfg.kdRange
+      }
+    };
+  }
+  s.knownStats = stats;
   s.knownAt = now;
   return [];
 }
