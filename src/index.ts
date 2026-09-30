@@ -56,6 +56,7 @@ async function main(): Promise<void> {
         : null,
       serverId: config.serverIds[0]!,
       wardogsAppId: config.wardogsAppId,
+      ignoredAppIds: new Set(config.steamIgnoreAppIds),
       links: { panelPublicUrl: config.panelPublicUrl, serverLabels: config.serverLabels }
     }
   });

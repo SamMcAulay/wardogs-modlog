@@ -1,6 +1,6 @@
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { parseExport } from './board-cache.js';
+import { EXPORT_CAP, parseExport } from './board-cache.js';
 import { loadConfig, type Config } from './config.js';
 import { serverLabel } from './discord.js';
 import { CloudflareBlockedError, WarconAuthError, WarconClient } from './warcon.js';
@@ -197,7 +197,11 @@ async function checkLookup(client: WarconClient, config: Config, steamFetch: typ
   const exportPath = `/api/servers/${serverId}/leaderboard/export?scope=org&range=30d&sort=playtime&dir=desc&minMinutes=0`;
   try {
     const rows = parseExport(await client.getCsv(exportPath));
-    results.push({ name: 'lookup 30-day board', ok: true, detail: `answered, ${rows.size} players` });
+    results.push({
+      name: 'lookup 30-day board',
+      ok: true,
+      detail: `answered, ${rows.size} players${rows.size >= EXPORT_CAP ? ' (full: the least-played read as "under N h")' : ''}`
+    });
   } catch (err) {
     results.push({ name: 'lookup 30-day board', ok: false, detail: explain(exportPath, err) });
   }

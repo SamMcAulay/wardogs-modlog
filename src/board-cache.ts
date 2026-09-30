@@ -85,9 +85,43 @@ export function parseExport(text: string): Map<string, ExportRow> {
 
 const TTL_MS = 60 * 60 * 1000;
 
+/** Warcon's export stops here (EXPORT_ROWS); a full one has cut off the least-played. */
+export const EXPORT_CAP = 10_000;
+
+export interface BoardHit {
+  /** null: not in the export */
+  row: ExportRow | null;
+  /**
+   * When the export was full: the least playtime (minutes, seeding included) of anyone in it.
+   * Anyone missing played at most this much. null: the export held everyone, so missing means
+   * no play in the range.
+   */
+  cutMinutes: number | null;
+}
+
+interface Held {
+  at: number;
+  rows: Map<string, ExportRow>;
+  cutMinutes: number | null;
+}
+
+/** The playtime sort puts the least-played last; a full export cuts at the smallest there. */
+function heldFrom(rows: Map<string, ExportRow>, at: number): Held {
+  let cutMinutes: number | null = null;
+  if (rows.size >= EXPORT_CAP) {
+    for (const r of rows.values()) cutMinutes = cutMinutes === null ? r.minutes : Math.min(cutMinutes, r.minutes);
+  }
+  return { at, rows, cutMinutes };
+}
+
+const hit = (held: Held, steamId: string): BoardHit => ({
+  row: held.rows.get(steamId) ?? null,
+  cutMinutes: held.cutMinutes
+});
+
 export class BoardCache {
-  private readonly held = new Map<ExportRange, { at: number; rows: Map<string, ExportRow> }>();
-  private readonly loading = new Map<ExportRange, Promise<Map<string, ExportRow>>>();
+  private readonly held = new Map<ExportRange, Held>();
+  private readonly loading = new Map<ExportRange, Promise<Held>>();
 
   constructor(
     private readonly client: WarconClient,
@@ -97,32 +131,32 @@ export class BoardCache {
   ) {}
 
   /**
-   * The player's row over the range, or null if they have none (no play in it). Sorted by
-   * playtime, so the export's ten-thousand-row cap drops the least-played, never a regular.
-   * A failed refresh keeps serving the last copy; with none, it throws.
+   * The player's row over the range, if the export has one. Sorted by playtime, so the
+   * export's ten-thousand-row cap drops the least-played, never a regular, and says how
+   * little they played. A failed refresh keeps serving the last copy; with none, it throws.
    */
-  async row(range: ExportRange, steamId: string): Promise<ExportRow | null> {
+  async row(range: ExportRange, steamId: string): Promise<BoardHit> {
     const held = this.held.get(range);
-    if (held && this.now() - held.at < TTL_MS) return held.rows.get(steamId) ?? null;
+    if (held && this.now() - held.at < TTL_MS) return hit(held, steamId);
     try {
-      return (await this.refresh(range)).get(steamId) ?? null;
+      return hit(await this.refresh(range), steamId);
     } catch (err) {
-      if (held) return held.rows.get(steamId) ?? null;
+      if (held) return hit(held, steamId);
       throw err;
     }
   }
 
   /** One download at a time per range, however many lookups arrive while it runs. */
-  private refresh(range: ExportRange): Promise<Map<string, ExportRow>> {
+  private refresh(range: ExportRange): Promise<Held> {
     const running = this.loading.get(range);
     if (running) return running;
     const query = new URLSearchParams({ scope: 'org', range, sort: 'playtime', dir: 'desc', minMinutes: '0' });
     const load = this.client
       .getCsv(`/api/servers/${encodeURIComponent(this.serverId)}/leaderboard/export?${query}`)
       .then((text) => {
-        const rows = parseExport(text);
-        this.held.set(range, { at: this.now(), rows });
-        return rows;
+        const held = heldFrom(parseExport(text), this.now());
+        this.held.set(range, held);
+        return held;
       })
       .finally(() => this.loading.delete(range));
     this.loading.set(range, load);

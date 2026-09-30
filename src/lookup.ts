@@ -1,4 +1,4 @@
-import type { BoardCache, ExportRow } from './board-cache.js';
+import type { BoardCache, BoardHit } from './board-cache.js';
 import { serverLabel, type Embed, type EmbedField, type LinkConfig } from './discord.js';
 import { actionRow, type ActionRow, type ButtonComponent } from './player-actions.js';
 import type { Playtime, SteamClient } from './steam.js';
@@ -51,9 +51,8 @@ export type Part<T> = { ok: true; value: T } | { ok: false; reason: string };
 
 export interface LookupData {
   dossier: Dossier;
-  /** null: no play in the range */
-  thirty: Part<ExportRow | null>;
-  lifetime: Part<ExportRow | null>;
+  thirty: Part<BoardHit>;
+  lifetime: Part<BoardHit>;
   /** null: the profile hides its games */
   steam: Part<Playtime | null>;
 }
@@ -66,6 +65,8 @@ export interface LookupDeps {
   /** the server the dossier is read through; it covers every org server the key sees */
   serverId: string;
   wardogsAppId: number;
+  /** Steam apps left out of the total and the top game */
+  ignoredAppIds: ReadonlySet<number>;
 }
 
 const why = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -87,7 +88,7 @@ export async function gatherLookup(deps: LookupDeps, steamId: string): Promise<L
     part(deps.boards.row('30d', steamId)),
     part(deps.boards.row('all', steamId)),
     deps.steam
-      ? part(deps.steam.playtime(steamId, deps.wardogsAppId))
+      ? part(deps.steam.playtime(steamId, deps.wardogsAppId, deps.ignoredAppIds))
       : Promise.resolve<Part<Playtime | null>>({ ok: false, reason: 'not configured' })
   ]);
   return { dossier: dossier.dossier, thirty, lifetime, steam };
@@ -139,7 +140,9 @@ function hoursField(d: Dossier, steam: LookupData['steam']): EmbedField {
   } else {
     const p = steam.value;
     lines.push(`Wardogs total: ${p.wardogsMinutes === null ? 'not in their library' : `**${hours(p.wardogsMinutes)}**`}`);
-    lines.push(`All Steam games: **${hours(p.totalMinutes)}**`);
+    lines.push(
+      `All Steam games: **${hours(p.totalMinutes)}**${p.ignoredMinutes > 0 ? ` (overlay tools left out: ${hours(p.ignoredMinutes)})` : ''}`
+    );
     if (p.top) lines.push(`Most played: ${escapeMd(p.top.name)} (**${hours(p.top.minutes)}**)`);
   }
   return field('Hours', lines.join('\n'));
@@ -150,7 +153,7 @@ function lifetimeField(d: Dossier, lifetime: LookupData['lifetime']): EmbedField
   if (sessions === 0) return field('Lifetime', 'No play', true);
   // The export's rate leaves seeding out, as the panel's does. The dossier can't, so its rate is
   // only the fallback, and says so.
-  const row = lifetime.ok ? lifetime.value : null;
+  const row = lifetime.ok ? lifetime.value.row : null;
   const rate = row
     ? `**${fixed(perHour(row.kills, row.minutes, row.seedMinutes), 1)}** kills/h`
     : `**${fixed(perHour(kills, minutes), 1)}** kills/h (seeding included)`;
@@ -163,8 +166,16 @@ function lifetimeField(d: Dossier, lifetime: LookupData['lifetime']): EmbedField
 
 function thirtyField(thirty: LookupData['thirty']): EmbedField {
   if (!thirty.ok) return field('Last 30 days', 'unavailable', true);
-  const r = thirty.value;
-  if (!r) return field('Last 30 days', 'No play', true);
+  const { row: r, cutMinutes } = thirty.value;
+  if (!r) {
+    // Warcon's export stops at ten thousand players, least-played last: missing from a full one
+    // means little play, not none.
+    return field(
+      'Last 30 days',
+      cutMinutes === null ? 'No play' : `Under ${hours(cutMinutes)} played, too little for Warcon's export`,
+      true
+    );
+  }
   return field(
     'Last 30 days',
     [
