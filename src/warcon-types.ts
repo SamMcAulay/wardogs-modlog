@@ -106,3 +106,51 @@ export interface BoardBody {
   /** the query Warcon actually ran; it falls back to another sort for one it doesn't know */
   query?: { sort?: string };
 }
+
+/** A player's dossier (`GET /api/servers/{id}/players/{steamId}`), across every org server the key sees. */
+export interface Dossier {
+  steamId: string;
+  /** the name last seen with, or the id */
+  name: string;
+  /** names seen on the org's servers, most recent first, at most ten */
+  names: string[];
+  online: { serverId: string; serverName: string } | null;
+  steam: {
+    persona: string;
+    profileUrl: string;
+    public: boolean;
+    accountAgeDays: number | null;
+    vacBans: number;
+    gameBans: number;
+    daysSinceLastBan: number | null;
+    communityBanned: boolean;
+  } | null;
+  risk: {
+    score: number;
+    level: 'low' | 'medium' | 'high';
+    reasons: { code: string; text: string; weight: number }[];
+  };
+  /** `reason` is '' unless the key holds Notes & watchlist */
+  watch: { watched: boolean; reason: string; updatedByName: string; updatedAt: string | null };
+  bannedOn: { serverId: string; serverName: string; reason: string; bannedBy: string }[];
+  summary: {
+    sessions: number;
+    /** time on the servers, seeding included */
+    minutes: number;
+    /** the scoreboard's, summed over ended matches */
+    kills: number;
+    deaths: number;
+    firstSeen: string | null;
+    lastSeen: string | null;
+  };
+  /** from the kill feed; null while no server has one */
+  combat: { teamKills: number; teamKilled: number; headshots: number } | null;
+  perServer: { serverId: string; serverName: string; sessions: number; minutes: number; lastSeen: string }[];
+  /** empty unless the key holds Notes & watchlist */
+  notes: { authorName: string; body: string; createdAt: string }[];
+}
+
+export interface DossierBody {
+  ok: boolean;
+  dossier: Dossier;
+}

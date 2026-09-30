@@ -1,9 +1,11 @@
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { parseExport } from './board-cache.js';
 import { loadConfig, type Config } from './config.js';
 import { serverLabel } from './discord.js';
 import { CloudflareBlockedError, WarconAuthError, WarconClient } from './warcon.js';
-import type { BoardBody, SummaryBody } from './warcon-types.js';
+import { SteamClient } from './steam.js';
+import type { BoardBody, DossierBody, SummaryBody } from './warcon-types.js';
 
 export interface CheckResult {
   name: string;
@@ -22,10 +24,14 @@ function explain(path: string, err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Any real account does: a dossier answers for players never seen, and Steam for public profiles. */
+const PROBE_STEAM_ID = '76561197960287930';
+
 export async function checkAll(
   client: WarconClient,
   config: Config,
-  discordFetch: (url: string, init: RequestInit) => Promise<Response>
+  discordFetch: (url: string, init: RequestInit) => Promise<Response>,
+  steamFetch: typeof fetch = fetch
 ): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
 
@@ -166,6 +172,47 @@ export async function checkAll(
     });
   }
 
+  results.push(...(await checkLookup(client, config, steamFetch)));
+  return results;
+}
+
+/** `/lookup`'s three sources: the dossier, the org board export, and Steam when it's set up. */
+async function checkLookup(client: WarconClient, config: Config, steamFetch: typeof fetch): Promise<CheckResult[]> {
+  const results: CheckResult[] = [];
+  const serverId = config.serverIds[0];
+  if (!serverId) return results;
+
+  const dossierPath = `/api/servers/${serverId}/players/${PROBE_STEAM_ID}`;
+  try {
+    const body = await client.getJson<DossierBody>(dossierPath);
+    results.push(
+      Array.isArray(body.dossier?.names) && body.dossier.summary
+        ? { name: 'lookup dossier', ok: true, detail: 'answered' }
+        : { name: 'lookup dossier', ok: false, detail: 'answered without names or summary — this Warcon is too old for /lookup' }
+    );
+  } catch (err) {
+    results.push({ name: 'lookup dossier', ok: false, detail: explain(dossierPath, err) });
+  }
+
+  const exportPath = `/api/servers/${serverId}/leaderboard/export?scope=org&range=30d&sort=playtime&dir=desc&minMinutes=0`;
+  try {
+    const rows = parseExport(await client.getCsv(exportPath));
+    results.push({ name: 'lookup 30-day board', ok: true, detail: `answered, ${rows.size} players` });
+  } catch (err) {
+    results.push({ name: 'lookup 30-day board', ok: false, detail: explain(exportPath, err) });
+  }
+
+  if (!config.steamApiKey) {
+    results.push({ name: 'steam key', ok: true, detail: 'unset — /lookup shows Steam playtime as not configured' });
+  } else {
+    try {
+      const steam = new SteamClient({ apiKey: config.steamApiKey, timeoutMs: config.requestTimeoutMs, fetchImpl: steamFetch });
+      await steam.playtime(PROBE_STEAM_ID, config.wardogsAppId);
+      results.push({ name: 'steam key', ok: true, detail: 'accepted' });
+    } catch (err) {
+      results.push({ name: 'steam key', ok: false, detail: err instanceof Error ? err.message : String(err) });
+    }
+  }
   return results;
 }
 

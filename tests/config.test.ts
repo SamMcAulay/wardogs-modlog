@@ -31,6 +31,13 @@ describe('loadConfig', () => {
     expect(c.serverIds).toEqual([]);
     expect(c.serverLabels).toEqual({});
     expect([...c.pingOn]).toEqual(['live']);
+    expect(c.steamApiKey).toBeNull();
+    expect(c.wardogsAppId).toBe(1867240);
+  });
+
+  test('a Steam key turns on the lookup\'s Steam playtime', () => {
+    const c = loadConfig({ ...base, STEAM_API_KEY: ' key ', WARDOGS_APP_ID: '42' });
+    expect([c.steamApiKey, c.wardogsAppId]).toEqual(['key', 42]);
   });
 
   test('the live thresholds and the join limit can be overridden', () => {

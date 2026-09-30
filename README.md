@@ -105,7 +105,41 @@ watchlist shows Kick only. Kicks, bans and feed warnings carry no buttons.
 
 The buttons need a live connection to Discord. The bot now holds one (Guilds intent only,
 no privileged intents), which is also why it shows as online. If that connection can't be
-made, alerts still post and only the buttons stop working; the log says so.
+made, alerts still post and only the buttons and `/lookup` stop working; the log says so.
+
+## `/lookup`
+
+`/lookup player:<SteamID64 or Steam profile link>` posts everything staff want to know about
+one player into the channel it's run in. Only `DISCORD_MOD_ROLE_ID` can run it; anyone else,
+or a malformed player, gets a reply only they see. In-game names aren't searched: a bare word
+is refused rather than guessed at. `/id/<name>` links need `STEAM_API_KEY` to resolve.
+
+| Shows | From |
+| --- | --- |
+| Name, and up to ten other names seen on our servers | Warcon dossier |
+| Online now (and where), first and last seen | Warcon dossier |
+| Hours on our servers, total and per server | Warcon dossier (seeding included) |
+| Lifetime K/D and kills/hour | Dossier for the K/D; the all-time board export for the rate, seeding left out as the panel does |
+| 30-day K/D, kills/hour, hours and matches | The org's 30-day board export |
+| Team kills given and received | The dossier's kill-feed record; reads "No kill feed yet" until a feed runs |
+| Watch status and reason, bans on our servers, staff notes | Warcon dossier (reason and notes need **Notes & watchlist** on the key) |
+| Risk score and why; Steam account age, VAC and game bans | Warcon dossier |
+| Total Steam hours, most-played game, hours in Wardogs | Steam's `GetOwnedGames`, when `STEAM_API_KEY` is set; "hidden" for a private profile |
+
+The command registers itself in every Discord server the bot is in each time it connects, so it
+appears at once. If the log says `couldn't register /lookup`, re-invite the bot with the
+`applications.commands` scope.
+
+The reply carries **Watch** (unless they're already watched) and **Kick** (only while they're
+on a server), working exactly as on alerts.
+
+Warcon has no per-player board, so the bot downloads the organisation's board export (every
+player, one CSV per range) at most once an hour, on the first lookup that needs it, and keeps
+it in memory. The export needs only `server.view`. A lookup whose export or Steam read fails
+still posts, with that part marked unavailable; only a dossier failure stops it.
+
+**Steam key:** create one at <https://steamcommunity.com/dev/apikey> (any domain name will do)
+and set `STEAM_API_KEY`. It only reads public profile data.
 
 ## Setup
 
@@ -197,6 +231,8 @@ this, since server labels are things like `EU#1` and `NA#3`.
 | `LIVE_MIN_MINUTES` | Minutes the bot must have seen them in the match first (default `20`) |
 | `LIVE_MIN_KILLS` | Kills this match needed as well (default `8`) |
 | `FEED_QUIET_MINUTES` | Minutes a configured feed can go quiet, with players on, before a health warning posts (default `30`) |
+| `STEAM_API_KEY` | Optional. `/lookup`'s Steam playtime and `/id/` links; without it those read "not configured" |
+| `WARDOGS_APP_ID` | Wardogs' Steam app id, for `/lookup`'s Wardogs hours (default `1867240`) |
 
 ## Upgrading to live alerts
 
