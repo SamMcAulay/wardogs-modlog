@@ -124,7 +124,7 @@ is refused rather than guessed at. `/id/<name>` links need `STEAM_API_KEY` to re
 | Team kills given and received | The dossier's kill-feed record; reads "No kill feed yet" until a feed runs |
 | Watch status and reason, bans on our servers, staff notes | Warcon dossier (reason and notes need **Notes & watchlist** on the key) |
 | Risk score and why; Steam account age, VAC and game bans | Warcon dossier |
-| Total Steam hours, most-played game, hours in Wardogs | Steam's `GetOwnedGames`, when `STEAM_API_KEY` is set; "hidden" for a private profile |
+| Total Steam hours, most-played game, hours in Wardogs | Steam's `GetOwnedGames`, when `STEAM_API_KEY` is set; "hidden" for a private profile. Tools that run beside a game (crosshair overlays, Lossless Scaling, Wallpaper Engine, OBS…) are left out of the total and the top game, and the hours left out are named |
 
 The command registers itself in every Discord server the bot is in each time it connects, so it
 appears at once. If the log says `couldn't register /lookup`, re-invite the bot with the
@@ -135,7 +135,9 @@ on a server), working exactly as on alerts.
 
 Warcon has no per-player board, so the bot downloads the organisation's board export (every
 player, one CSV per range) at most once an hour, on the first lookup that needs it, and keeps
-it in memory. The export needs only `server.view`. A lookup whose export or Steam read fails
+it in memory. The export needs only `server.view`. It stops at ten thousand players, least
+played last, so on a busy organisation someone who played very little reads as "Under 1.5 h
+played" (the least anyone in the export played) rather than "No play". A lookup whose export or Steam read fails
 still posts, with that part marked unavailable; only a dossier failure stops it.
 
 **Steam key:** create one at <https://steamcommunity.com/dev/apikey> (any domain name will do)
@@ -233,6 +235,7 @@ this, since server labels are things like `EU#1` and `NA#3`.
 | `FEED_QUIET_MINUTES` | Minutes a configured feed can go quiet, with players on, before a health warning posts (default `30`) |
 | `STEAM_API_KEY` | Optional. `/lookup`'s Steam playtime and `/id/` links; without it those read "not configured" |
 | `WARDOGS_APP_ID` | Wardogs' Steam app id, for `/lookup`'s Wardogs hours (default `1867240`) |
+| `STEAM_IGNORE_APP_IDS` | Steam app ids left out of `/lookup`'s total and top game. Unset or blank: the built-in list of overlay tools (`DEFAULT_IGNORED_APP_IDS` in `src/steam.ts`). Set: exactly these. `none`: nothing is left out |
 
 ## Upgrading to live alerts
 

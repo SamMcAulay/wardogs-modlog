@@ -13,7 +13,20 @@ describe('playtimeOf', () => {
       ],
       WARDOGS
     );
-    expect(p).toEqual({ totalMinutes: 7200, top: { name: 'Rust', minutes: 6000 }, wardogsMinutes: 1200 });
+    expect(p).toEqual({ totalMinutes: 7200, ignoredMinutes: 0, top: { name: 'Rust', minutes: 6000 }, wardogsMinutes: 1200 });
+  });
+
+  test('ignored tools leave the total and the top game, but never Wardogs', () => {
+    const p = playtimeOf(
+      [
+        { appid: 1366800, name: 'Crosshair X', playtime_forever: 9000 },
+        { appid: 1, name: 'Rust', playtime_forever: 600 },
+        { appid: WARDOGS, name: 'WARDOGS', playtime_forever: 300 }
+      ],
+      WARDOGS,
+      new Set([1366800, WARDOGS])
+    );
+    expect(p).toEqual({ totalMinutes: 900, ignoredMinutes: 9000, top: { name: 'Rust', minutes: 600 }, wardogsMinutes: 300 });
   });
 
   test('a hidden game list is hidden, not zero hours', () => {

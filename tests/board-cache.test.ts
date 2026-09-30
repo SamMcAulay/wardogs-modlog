@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { BoardCache, parseCsv, parseExport } from '../src/board-cache.js';
+import { BoardCache, EXPORT_CAP, parseCsv, parseExport } from '../src/board-cache.js';
 import type { WarconClient } from '../src/warcon.js';
 
 const HEADER =
@@ -43,16 +43,24 @@ describe('BoardCache', () => {
     let now = 0;
     const { client, paths } = fakeClient([async () => csv(ALPHA), async () => csv()]);
     const cache = new BoardCache(client, 'srv', () => now);
-    expect((await cache.row('30d', '76561190000000001'))?.kills).toBe(90);
-    expect(await cache.row('30d', '76561190000000009')).toBeNull();
+    expect((await cache.row('30d', '76561190000000001')).row?.kills).toBe(90);
+    expect(await cache.row('30d', '76561190000000009')).toEqual({ row: null, cutMinutes: null });
     expect(paths).toHaveLength(1);
     expect(paths[0]).toContain('/api/servers/srv/leaderboard/export?');
     expect(paths[0]).toContain('scope=org');
     expect(paths[0]).toContain('range=30d');
     expect(paths[0]).toContain('minMinutes=0');
     now = 61 * 60 * 1000;
-    expect(await cache.row('30d', '76561190000000001')).toBeNull();
+    expect((await cache.row('30d', '76561190000000001')).row).toBeNull();
     expect(paths).toHaveLength(2);
+  });
+
+  test('a full export says how little a missing player can have played', async () => {
+    // Sorted by playtime, most first: the last of ten thousand rows played least.
+    const rows = Array.from({ length: EXPORT_CAP }, (_, i) => `${i + 1},${7656119000000000 + i},P${i},${EXPORT_CAP + 100 - i},0,1,1,1,1,0,0,0,0,0,0,1,0,0,0,,0,`);
+    const { client } = fakeClient([async () => csv(...rows)]);
+    const cache = new BoardCache(client, 'srv', () => 0);
+    expect(await cache.row('30d', '76561190000000009')).toEqual({ row: null, cutMinutes: 101 });
   });
 
   test('lookups arriving together share one download', async () => {
@@ -75,8 +83,8 @@ describe('BoardCache', () => {
     ]);
     const cache = new BoardCache(client, 'srv', () => now);
     await expect(cache.row('30d', '76561190000000001')).rejects.toThrow('panel down');
-    expect((await cache.row('30d', '76561190000000001'))?.kills).toBe(90);
+    expect((await cache.row('30d', '76561190000000001')).row?.kills).toBe(90);
     now = 2 * 60 * 60 * 1000;
-    expect((await cache.row('30d', '76561190000000001'))?.kills).toBe(90);
+    expect((await cache.row('30d', '76561190000000001')).row?.kills).toBe(90);
   });
 });

@@ -33,6 +33,14 @@ describe('loadConfig', () => {
     expect([...c.pingOn]).toEqual(['live']);
     expect(c.steamApiKey).toBeNull();
     expect(c.wardogsAppId).toBe(1867240);
+    expect(c.steamIgnoreAppIds).toContain(1366800);
+  });
+
+  test('STEAM_IGNORE_APP_IDS replaces the list; none empties it; blank keeps it', () => {
+    expect(loadConfig({ ...base, STEAM_IGNORE_APP_IDS: ' 1, 2 ' }).steamIgnoreAppIds).toEqual([1, 2]);
+    expect(loadConfig({ ...base, STEAM_IGNORE_APP_IDS: 'none' }).steamIgnoreAppIds).toEqual([]);
+    expect(loadConfig({ ...base, STEAM_IGNORE_APP_IDS: '' }).steamIgnoreAppIds).toContain(1477830);
+    expect(() => loadConfig({ ...base, STEAM_IGNORE_APP_IDS: '1,crosshair' })).toThrow(/crosshair/);
   });
 
   test('a Steam key turns on the lookup\'s Steam playtime', () => {

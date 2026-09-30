@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { PING_KINDS, type PingKind } from './escalate.js';
+import { DEFAULT_IGNORED_APP_IDS } from './steam.js';
 
 /** The `range` values Warcon's leaderboard accepts. */
 export const BOARD_RANGES = ['7d', '30d', '90d', 'all'] as const;
@@ -37,6 +38,8 @@ export interface Config {
   /** `/lookup`'s Steam playtime; null leaves those lines reading "not configured" */
   steamApiKey: string | null;
   wardogsAppId: number;
+  /** Steam apps left out of `/lookup`'s total and top game: tools that run beside a game */
+  steamIgnoreAppIds: number[];
 }
 
 function parseServerLabels(raw: string): Record<string, string> {
@@ -83,6 +86,18 @@ function parsePingOn(raw: string): ReadonlySet<PingKind> {
     kinds.add(entry as PingKind);
   }
   return kinds;
+}
+
+/** Unset or blank: the built-in list. `none`: nothing is ignored. Otherwise exactly these ids. */
+function parseAppIds(raw: string): number[] {
+  const value = raw.trim();
+  if (value === '') return [...DEFAULT_IGNORED_APP_IDS];
+  if (value.toLowerCase() === 'none') return [];
+  return value.split(',').map((entry) => {
+    const id = entry.trim();
+    if (!/^\d+$/.test(id)) throw new Error(`STEAM_IGNORE_APP_IDS entry "${id}" is not a Steam app id`);
+    return Number(id);
+  });
 }
 
 function isHttpUrl(raw: string): boolean {
@@ -177,6 +192,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     liveMinKills: num('LIVE_MIN_KILLS', 8),
     joinAlertHours: num('JOIN_ALERT_HOURS', 24),
     steamApiKey: opt('STEAM_API_KEY'),
-    wardogsAppId: num('WARDOGS_APP_ID', 1867240)
+    wardogsAppId: num('WARDOGS_APP_ID', 1867240),
+    steamIgnoreAppIds: parseAppIds(env.STEAM_IGNORE_APP_IDS ?? '')
   };
 }

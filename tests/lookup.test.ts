@@ -56,11 +56,11 @@ const dossier = (over: Partial<Dossier> = {}): Dossier => ({
 
 const data = (over: Partial<LookupData> = {}, d: Partial<Dossier> = {}): LookupData => ({
   dossier: dossier(d),
-  thirty: { ok: true, value: { minutes: 600, seedMinutes: 0, kills: 40, deaths: 10, matches: 9 } },
-  lifetime: { ok: true, value: { minutes: 1200, seedMinutes: 200, kills: 300, deaths: 100, matches: 30 } },
+  thirty: { ok: true, value: { row: { minutes: 600, seedMinutes: 0, kills: 40, deaths: 10, matches: 9 }, cutMinutes: null } },
+  lifetime: { ok: true, value: { row: { minutes: 1200, seedMinutes: 200, kills: 300, deaths: 100, matches: 30 }, cutMinutes: null } },
   steam: {
     ok: true,
-    value: { totalMinutes: 300_000, top: { name: 'Rust', minutes: 120_000 }, wardogsMinutes: 6000 }
+    value: { totalMinutes: 300_000, ignoredMinutes: 0, top: { name: 'Rust', minutes: 120_000 }, wardogsMinutes: 6000 }
   },
   ...over
 });
@@ -106,27 +106,27 @@ describe('gatherLookup', () => {
     ({
       row: async () => {
         if (fail) throw new Error('export down');
-        return null;
+        return { row: null, cutMinutes: null };
       }
     }) as unknown as BoardCache;
 
   test('reads the dossier, both boards and Steam', async () => {
     const steam = { playtime: async () => null } as unknown as SteamClient;
-    const d = await gatherLookup({ warcon: warcon(), boards: boards(), steam, serverId: EU1, wardogsAppId: 1 }, STEAM);
+    const d = await gatherLookup({ warcon: warcon(), boards: boards(), steam, serverId: EU1, wardogsAppId: 1, ignoredAppIds: new Set<number>() }, STEAM);
     expect(d.dossier.name).toBe('Alpha');
-    expect(d.thirty).toEqual({ ok: true, value: null });
+    expect(d.thirty).toEqual({ ok: true, value: { row: null, cutMinutes: null } });
     expect(d.steam).toEqual({ ok: true, value: null });
   });
 
   test('a failed board or no Steam key is a part missing, not a failed lookup', async () => {
-    const d = await gatherLookup({ warcon: warcon(), boards: boards(true), steam: null, serverId: EU1, wardogsAppId: 1 }, STEAM);
+    const d = await gatherLookup({ warcon: warcon(), boards: boards(true), steam: null, serverId: EU1, wardogsAppId: 1, ignoredAppIds: new Set<number>() }, STEAM);
     expect(d.thirty).toEqual({ ok: false, reason: 'export down' });
     expect(d.steam).toEqual({ ok: false, reason: 'not configured' });
   });
 
   test('a failed dossier fails the lookup', async () => {
     await expect(
-      gatherLookup({ warcon: warcon(true), boards: boards(), steam: null, serverId: EU1, wardogsAppId: 1 }, STEAM)
+      gatherLookup({ warcon: warcon(true), boards: boards(), steam: null, serverId: EU1, wardogsAppId: 1, ignoredAppIds: new Set<number>() }, STEAM)
     ).rejects.toThrow('500');
   });
 });
@@ -198,9 +198,21 @@ describe('lookupMessage', () => {
   });
 
   test('no Steam key, and no play in 30 days', () => {
-    const m = lookupMessage(data({ steam: { ok: false, reason: 'not configured' }, thirty: { ok: true, value: null } }), links, EU1);
+    const m = lookupMessage(data({ steam: { ok: false, reason: 'not configured' }, thirty: { ok: true, value: { row: null, cutMinutes: null } } }), links, EU1);
     expect(fieldOf(m, 'Hours')).toContain('not configured');
     expect(fieldOf(m, 'Last 30 days')).toBe('No play');
+  });
+
+  test('missing from a full export reads as little play, not none', () => {
+    const m = lookupMessage(data({ thirty: { ok: true, value: { row: null, cutMinutes: 90 } } }), links, EU1);
+    expect(fieldOf(m, 'Last 30 days')).toBe("Under 1.5 h played, too little for Warcon's export");
+  });
+
+  test('left-out overlay hours are named', () => {
+    const steam = { ok: true as const, value: { totalMinutes: 6000, ignoredMinutes: 1200, top: null, wardogsMinutes: 60 } };
+    expect(fieldOf(lookupMessage(data({ steam }), links, EU1), 'Hours')).toContain(
+      'All Steam games: **100 h** (overlay tools left out: 20 h)'
+    );
   });
 
   test('a player never seen here still gets their Steam side', () => {
