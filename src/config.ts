@@ -34,6 +34,9 @@ export interface Config {
   liveMinKills: number;
   /** live-alerts spec §4.3: how long a sweat / high-K/D join tag stays quiet after posting */
   joinAlertHours: number;
+  /** `/lookup`'s Steam playtime; null leaves those lines reading "not configured" */
+  steamApiKey: string | null;
+  wardogsAppId: number;
 }
 
 function parseServerLabels(raw: string): Record<string, string> {
@@ -172,6 +175,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     livePerHour: num('LIVE_PER_HOUR', 20),
     liveMinMinutes: num('LIVE_MIN_MINUTES', 20),
     liveMinKills: num('LIVE_MIN_KILLS', 8),
-    joinAlertHours: num('JOIN_ALERT_HOURS', 24)
+    joinAlertHours: num('JOIN_ALERT_HOURS', 24),
+    steamApiKey: opt('STEAM_API_KEY'),
+    wardogsAppId: num('WARDOGS_APP_ID', 1867240)
   };
 }

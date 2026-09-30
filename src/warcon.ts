@@ -40,6 +40,33 @@ export class WarconClient {
 
   /** `path` includes any query string, e.g. `/api/audit?category=rcon`. */
   async getJson<T>(path: string): Promise<T> {
+    const res = await this.get(path);
+    const contentType = res.headers.get('content-type') ?? '';
+    if (!/application\/json/i.test(contentType)) {
+      throw new CloudflareBlockedError(
+        `blocked by Cloudflare Access (non-JSON response, content-type: ${contentType || 'none'})`
+      );
+    }
+    return (await res.json()) as T;
+  }
+
+  /**
+   * A CSV download (the leaderboard export). Cloudflare's login page is HTML, so anything
+   * but `text/csv` is read as a block, the way `getJson` reads anything but JSON.
+   */
+  async getCsv(path: string): Promise<string> {
+    const res = await this.get(path);
+    const contentType = res.headers.get('content-type') ?? '';
+    if (!/text\/csv/i.test(contentType)) {
+      throw new CloudflareBlockedError(
+        `blocked by Cloudflare Access (non-CSV response, content-type: ${contentType || 'none'})`
+      );
+    }
+    return res.text();
+  }
+
+  /** A GET that reached Warcon and succeeded; every other outcome throws, named. */
+  private async get(path: string): Promise<Response> {
     const doFetch = this.opts.fetchImpl ?? fetch;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.opts.timeoutMs ?? 10_000);
@@ -74,15 +101,7 @@ export class WarconClient {
     // Status before content type: a 404 or 500 comes back as an HTML error page, and
     // calling that Cloudflare sends the reader after the wrong layer entirely.
     if (!res.ok) throw new Error(`warcon request failed (${res.status}) on ${path}`);
-
-    const contentType = res.headers.get('content-type') ?? '';
-    if (!/application\/json/i.test(contentType)) {
-      throw new CloudflareBlockedError(
-        `blocked by Cloudflare Access (non-JSON response, content-type: ${contentType || 'none'})`
-      );
-    }
-
-    return (await res.json()) as T;
+    return res;
   }
 
   /**

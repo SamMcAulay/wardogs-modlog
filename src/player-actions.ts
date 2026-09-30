@@ -61,17 +61,18 @@ const buttonId = (action: PlayerAction, serverId: string, steamId: string): stri
   `${IDS[action].button}:${serverId}:${steamId}`;
 
 /**
- * The buttons for an alert about this player on this server: Kick, and Watch unless they
- * are already on the watchlist.
+ * The buttons for an alert about this player on this server: Kick (unless they're known to be
+ * off it), and Watch unless they are already on the watchlist.
  */
 export function actionRow(
   serverId: string,
   steamId: string,
-  opts: { watch: boolean }
+  opts: { watch: boolean; kick?: boolean }
 ): ActionRow<ButtonComponent> {
-  const components: ButtonComponent[] = [
-    { type: 2, style: 4, label: 'Kick', custom_id: buttonId('kick', serverId, steamId) }
-  ];
+  const components: ButtonComponent[] = [];
+  if (opts.kick ?? true) {
+    components.push({ type: 2, style: 4, label: 'Kick', custom_id: buttonId('kick', serverId, steamId) });
+  }
   if (opts.watch) {
     components.push({ type: 2, style: 1, label: 'Watch', custom_id: buttonId('watch', serverId, steamId) });
   }

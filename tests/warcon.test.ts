@@ -169,3 +169,21 @@ describe('WarconClient.postAction', () => {
     expect(method).toBe('PUT');
   });
 });
+
+describe('WarconClient.getCsv', () => {
+  test('returns the CSV text', async () => {
+    const client = new WarconClient({
+      ...opts,
+      fetchImpl: async () => new Response('a,b\r\n1,2', { headers: { 'content-type': 'text/csv; charset=utf-8' } })
+    });
+    expect(await client.getCsv('/api/x')).toBe('a,b\r\n1,2');
+  });
+
+  test('an HTML page in its place is Cloudflare', async () => {
+    const client = new WarconClient({
+      ...opts,
+      fetchImpl: async () => new Response('<html>', { headers: { 'content-type': 'text/html' } })
+    });
+    await expect(client.getCsv('/api/x')).rejects.toBeInstanceOf(CloudflareBlockedError);
+  });
+});

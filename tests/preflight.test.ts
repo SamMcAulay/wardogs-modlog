@@ -35,12 +35,16 @@ const okDiscord = async (url: string) => {
   });
 };
 
+const EXPORT = 'rank,steam_id,name,playtime_min,seeded_min,kills,deaths,matches\r\n1,765,A,60,0,5,1,1';
+
 describe('checkAll', () => {
   test('passes when every endpoint answers', async () => {
     const client = {
       getJson: async () => ({
-        ok: true, entries: [], kills: [], rows: [], marks: [], live: null, query: { sort: 'perHour' }
-      })
+        ok: true, entries: [], kills: [], rows: [], marks: [], live: null, query: { sort: 'perHour' },
+        dossier: { names: [], summary: {} }
+      }),
+      getCsv: async () => EXPORT
     } as never;
     const results = await checkAll(client, config as never, okDiscord);
     expect(results.every((r) => r.ok)).toBe(true);
@@ -165,7 +169,8 @@ describe('sweat-list board', () => {
     const results = await checkAll(client, config as never, okDiscord);
     expect(find(results, 'perHour board (s1)')!.ok).toBe(true);
     expect(paths).toContain(PERHOUR);
-    expect(paths.some((p) => /\/players\/\d+$/.test(p))).toBe(false);
+    // The per-server checks read no dossier; /lookup's check reads one, once.
+    expect(paths.filter((p) => /\/players\/\d+$/.test(p))).toEqual(['/api/servers/s1/players/76561197960287930']);
     expect(results.some((r) => r.name.startsWith('dossier'))).toBe(false);
   });
 
@@ -229,5 +234,40 @@ describe('live-data check', () => {
       throw new Error('summary 500');
     });
     expect(check).toMatchObject({ ok: true, detail: expect.stringContaining('skipped') });
+  });
+});
+
+describe('lookup checks', () => {
+  const answering = {
+    getJson: async (path: string) =>
+      path.includes('/players/')
+        ? { ok: true, dossier: { names: [], summary: {} } }
+        : { ok: true, entries: [], kills: [], rows: [], marks: [], live: null, query: { sort: 'perHour' } },
+    getCsv: async () => EXPORT
+  } as never;
+  const find = (results: CheckResult[], name: string) => results.find((r) => r.name === name)!;
+
+  test('the dossier and the org export answer; no Steam key is fine', async () => {
+    const results = await checkAll(answering, config as never, okDiscord);
+    expect(find(results, 'lookup dossier').ok).toBe(true);
+    expect(find(results, 'lookup 30-day board')).toMatchObject({ ok: true, detail: 'answered, 1 players' });
+    expect(find(results, 'steam key')).toMatchObject({ ok: true });
+    expect(find(results, 'steam key').detail).toContain('unset');
+  });
+
+  test('a rejected Steam key fails', async () => {
+    const steamFetch = (async () => new Response('', { status: 403 })) as typeof fetch;
+    const results = await checkAll(answering, { ...config, steamApiKey: 'bad' } as never, okDiscord, steamFetch);
+    expect(find(results, 'steam key')).toMatchObject({ ok: false, detail: 'steam rejected STEAM_API_KEY' });
+  });
+
+  test('an export that is not CSV fails the board check', async () => {
+    const client = {
+      getJson: (answering as { getJson: unknown }).getJson,
+      getCsv: async () => {
+        throw new Error('blocked by Cloudflare Access (non-CSV response, content-type: text/html)');
+      }
+    } as never;
+    expect(find(await checkAll(client, config as never, okDiscord), 'lookup 30-day board').ok).toBe(false);
   });
 });

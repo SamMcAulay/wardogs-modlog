@@ -1,5 +1,6 @@
 import { loadConfig } from './config.js';
 import { RestPoster, serverLabel } from './discord.js';
+import { BoardCache } from './board-cache.js';
 import { startGateway } from './gateway.js';
 import { consoleLogger } from './log.js';
 import { runCycle } from './runner.js';
@@ -8,6 +9,7 @@ import { pollKills } from './sources/kills.js';
 import { pollKnown } from './sources/known.js';
 import { pollPresence } from './sources/presence.js';
 import { loadState, saveState } from './state.js';
+import { SteamClient } from './steam.js';
 import { WarconClient } from './warcon.js';
 
 async function main(): Promise<void> {
@@ -45,8 +47,19 @@ async function main(): Promise<void> {
     modRoleId: config.discordModRoleId,
     warcon: client,
     serverLabels: config.serverLabels,
-    logger: log
+    logger: log,
+    lookup: {
+      warcon: client,
+      boards: new BoardCache(client, config.serverIds[0]!),
+      steam: config.steamApiKey
+        ? new SteamClient({ apiKey: config.steamApiKey, timeoutMs: config.requestTimeoutMs })
+        : null,
+      serverId: config.serverIds[0]!,
+      wardogsAppId: config.wardogsAppId,
+      links: { panelPublicUrl: config.panelPublicUrl, serverLabels: config.serverLabels }
+    }
   });
+  if (!config.steamApiKey) log.info('lookup: STEAM_API_KEY unset — Steam playtime reads "not configured"');
   let lastKdAt = 0;
 
   const cycle = async (): Promise<void> => {

@@ -4,11 +4,14 @@ import {
   GatewayIntentBits,
   MessageFlags,
   type ButtonInteraction,
+  type ChatInputCommandInteraction,
+  type Guild,
   type Interaction,
   type Message,
   type ModalSubmitInteraction
 } from 'discord.js';
-import { serverLabel } from './discord.js';
+import { serverLabel, type LinkConfig } from './discord.js';
+import { LOOKUP_COMMAND, gatherLookup, lookupMessage, parsePlayerInput, type LookupDeps } from './lookup.js';
 import {
   actionModal,
   doneRows,
@@ -32,20 +35,24 @@ export interface GatewayDeps {
   warcon: WarconClient;
   serverLabels: Record<string, string>;
   logger: Logger;
+  /** `/lookup`'s data sources and links */
+  lookup: LookupDeps & { links: LinkConfig };
 }
 
 /**
- * The bot's live Discord connection, for the Kick and Watch buttons only: alerts are
+ * The bot's live Discord connection, for the Kick and Watch buttons and `/lookup`: alerts are
  * still posted over REST. It asks for the Guilds intent alone (no privileged intents),
  * which is all an interaction needs. A failed login is logged and the bot carries on
- * posting alerts; only the buttons stop working.
+ * posting alerts; only the buttons and the command stop working.
  */
 export function startGateway(deps: GatewayDeps): Client {
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
   client.once(Events.ClientReady, (c) => {
     deps.logger.info(`discord: connected as ${c.user.tag}; Kick and Watch buttons are live`);
+    for (const guild of c.guilds.cache.values()) void register(guild, deps.logger);
   });
+  client.on(Events.GuildCreate, (guild) => void register(guild, deps.logger));
   client.on(Events.Error, (err) => deps.logger.error(`discord: ${err.message}`));
   client.on(Events.InteractionCreate, (interaction) => {
     void handle(interaction, deps).catch((err: unknown) => {
@@ -63,9 +70,84 @@ export function startGateway(deps: GatewayDeps): Client {
   return client;
 }
 
+/**
+ * `/lookup` per guild rather than globally: a guild command appears at once, a global one can
+ * take an hour. `set` replaces the guild's commands, which are only ever this bot's own.
+ */
+async function register(guild: Guild, logger: Logger): Promise<void> {
+  try {
+    await guild.commands.set([LOOKUP_COMMAND]);
+    logger.info(`discord: /lookup registered in ${guild.name}`);
+  } catch (err) {
+    logger.error(`discord: couldn't register /lookup in ${guild.name}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 async function handle(interaction: Interaction, deps: GatewayDeps): Promise<void> {
-  if (interaction.isButton()) await onButton(interaction, deps);
+  if (interaction.isChatInputCommand() && interaction.commandName === LOOKUP_COMMAND.name) {
+    await onLookup(interaction, deps);
+  } else if (interaction.isButton()) await onButton(interaction, deps);
   else if (interaction.isModalSubmit()) await onConfirm(interaction, deps);
+}
+
+/**
+ * `/lookup`: mods only. The answer posts in the channel for the team to see; a refusal or a
+ * malformed player is only shown to whoever typed it.
+ */
+async function onLookup(i: ChatInputCommandInteraction, deps: GatewayDeps): Promise<void> {
+  if (!mayAct(i, deps.modRoleId)) {
+    await refuse(i, deps.modRoleId, 'use /lookup');
+    return;
+  }
+  const input = parsePlayerInput(i.options.getString('player', true));
+  if (!input) {
+    await i.reply({
+      content:
+        'Give a SteamID64 (`7656119…`, 17 digits) or a Steam profile link (`steamcommunity.com/profiles/…` or `/id/…`). In-game names aren\'t searched.',
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+  if ('vanity' in input && !deps.lookup.steam) {
+    await i.reply({
+      content: 'Custom profile links need STEAM_API_KEY to resolve. Use the SteamID64 or the `/profiles/` link.',
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+  // Warcon and Steam together can take longer than the three seconds Discord allows.
+  await i.deferReply();
+
+  let steamId: string;
+  if ('vanity' in input) {
+    const resolved = await deps.lookup.steam!.resolveVanity(input.vanity).catch(() => undefined);
+    if (!resolved) {
+      await i.editReply(
+        resolved === null
+          ? `No Steam profile at steamcommunity.com/id/${input.vanity}.`
+          : "Steam didn't answer, so that profile link couldn't be resolved. Try the SteamID64."
+      );
+      return;
+    }
+    steamId = resolved;
+  } else steamId = input.steamId;
+
+  let data;
+  try {
+    data = await gatherLookup(deps.lookup, steamId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    deps.logger.warn(`lookup of ${steamId}: ${message}`);
+    await i.editReply(`Couldn't read the player's dossier from Warcon: ${message}`);
+    return;
+  }
+  deps.logger.info(`${modName(i)} looked up ${steamId}`);
+  const message = lookupMessage(data, deps.lookup.links, deps.lookup.serverId);
+  await i.editReply({
+    embeds: message.embeds,
+    components: message.components,
+    allowedMentions: { parse: [] }
+  });
 }
 
 /** A button pressed: check the role, then ask for confirmation (visible only to the presser). */
@@ -131,20 +213,22 @@ function rowsOf(message: Message): ActionRow<ButtonComponent>[] {
   return message.components.map((row) => row.toJSON()) as unknown as ActionRow<ButtonComponent>[];
 }
 
-function mayAct(i: ButtonInteraction | ModalSubmitInteraction, roleId: string): boolean {
+type Acted = ButtonInteraction | ModalSubmitInteraction | ChatInputCommandInteraction;
+
+function mayAct(i: Acted, roleId: string): boolean {
   return hasRole(i.member?.roles as Parameters<typeof hasRole>[0], roleId);
 }
 
-async function refuse(i: ButtonInteraction | ModalSubmitInteraction, roleId: string): Promise<void> {
+async function refuse(i: Acted, roleId: string, what = 'use these buttons'): Promise<void> {
   await i.reply({
-    content: `Only <@&${roleId}> can use these buttons.`,
+    content: `Only <@&${roleId}> can ${what}.`,
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] }
   });
 }
 
 /** How staff know the mod: their server nickname, else their display name, else username. */
-function modName(i: ButtonInteraction | ModalSubmitInteraction): string {
+function modName(i: Acted): string {
   const member = i.member;
   if (member && 'displayName' in member) return member.displayName;
   if (member && 'nick' in member && member.nick) return member.nick;

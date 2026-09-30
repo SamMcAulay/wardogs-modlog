@@ -108,6 +108,57 @@ createServer((req, res) => {
     });
   }
 
+  // /lookup's board: the org export, as CSV.
+  if (p.endsWith('/leaderboard/export')) {
+    res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8' });
+    return res.end(
+      [
+        'rank,steam_id,name,playtime_min,seeded_min,kills,deaths,kd,kills_per_hour,headshots,team_kills,suicides,vehicle_kills,kill_streak,death_streak,matches,wins,losses,draws,win_pct,cash,last_seen',
+        '1,76561190000000004,Delta,600,0,180,12,15,18,0,0,0,0,0,0,9,0,0,0,,0,',
+        '2,76561190000000001,"Alpha, the first",400,40,52,10,5.2,8.7,0,2,0,0,0,0,9,0,0,0,,0,'
+      ].join('\r\n')
+    );
+  }
+
+  // /lookup's dossier. Alpha is online on this server and has a few names; anyone else is a
+  // stranger, as Warcon answers for a player it has never seen.
+  const dossierMatch = p.match(/\/api\/servers\/([^/]+)\/players\/(\d{17})$/);
+  if (dossierMatch) {
+    const [, serverId, steamId] = dossierMatch;
+    const known = steamId === '76561190000000001';
+    const now = new Date().toISOString();
+    return json(res, {
+      ok: true,
+      dossier: {
+        steamId,
+        name: known ? 'Alpha' : steamId,
+        names: known ? ['Alpha', 'xX_Alpha_Xx', 'AlphaTest'] : [],
+        online: known ? { serverId, serverName: `Mock ${serverId.slice(0, 8)}` } : null,
+        steam: {
+          persona: known ? 'Alpha' : 'Stranger',
+          profileUrl: `https://steamcommunity.com/profiles/${steamId}`,
+          public: true,
+          accountAgeDays: 900,
+          vacBans: 0,
+          gameBans: 0,
+          daysSinceLastBan: null,
+          communityBanned: false
+        },
+        risk: known
+          ? { score: 35, level: 'medium', reasons: [{ code: 'kd', text: 'K/D well above the server', weight: 20 }] }
+          : { score: 0, level: 'low', reasons: [] },
+        watch: { watched: false, reason: '', updatedByName: '', updatedAt: null },
+        bannedOn: [],
+        summary: known
+          ? { sessions: 14, minutes: 1500, kills: 260, deaths: 70, firstSeen: '2026-03-01T12:00:00.000Z', lastSeen: now }
+          : { sessions: 0, minutes: 0, kills: 0, deaths: 0, firstSeen: null, lastSeen: null },
+        combat: known ? { teamKills: 3, teamKilled: 1, headshots: 40 } : null,
+        perServer: known ? [{ serverId, serverName: `Mock ${serverId.slice(0, 8)}`, sessions: 14, minutes: 1500, lastSeen: now }] : [],
+        notes: []
+      }
+    });
+  }
+
   if (p.endsWith('/leaderboard')) {
     return json(res, {
       ok: true,
