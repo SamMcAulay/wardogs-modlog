@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { PING_KINDS, type PingKind } from './escalate.js';
-import { DEFAULT_IGNORED_APP_IDS } from './steam.js';
+import { DEFAULT_COMPETITIVE_APP_IDS, DEFAULT_IGNORED_APP_IDS } from './steam.js';
 
 /** The `range` values Warcon's leaderboard accepts. */
 export const BOARD_RANGES = ['7d', '30d', '90d', 'all'] as const;
@@ -40,6 +40,11 @@ export interface Config {
   wardogsAppId: number;
   /** Steam apps left out of `/lookup`'s total and top game: tools that run beside a game */
   steamIgnoreAppIds: number[];
+  /** a join is tagged Steam veteran at this many hours across all games (0: off) */
+  steamTotalHours: number;
+  /** ...or this many in one of `steamCompetitiveAppIds` (0: off) */
+  steamGameHours: number;
+  steamCompetitiveAppIds: number[];
 }
 
 function parseServerLabels(raw: string): Record<string, string> {
@@ -88,14 +93,14 @@ function parsePingOn(raw: string): ReadonlySet<PingKind> {
   return kinds;
 }
 
-/** Unset or blank: the built-in list. `none`: nothing is ignored. Otherwise exactly these ids. */
-function parseAppIds(raw: string): number[] {
+/** Unset or blank: the built-in list. `none`: an empty list. Otherwise exactly these ids. */
+function parseAppIds(name: string, raw: string, defaults: readonly number[]): number[] {
   const value = raw.trim();
-  if (value === '') return [...DEFAULT_IGNORED_APP_IDS];
+  if (value === '') return [...defaults];
   if (value.toLowerCase() === 'none') return [];
   return value.split(',').map((entry) => {
     const id = entry.trim();
-    if (!/^\d+$/.test(id)) throw new Error(`STEAM_IGNORE_APP_IDS entry "${id}" is not a Steam app id`);
+    if (!/^\d+$/.test(id)) throw new Error(`${name} entry "${id}" is not a Steam app id`);
     return Number(id);
   });
 }
@@ -127,6 +132,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     const parsed = Number(raw);
     if (!Number.isFinite(parsed) || parsed <= 0) {
       throw new Error(`${key} must be a positive number, got: ${raw}`);
+    }
+    return parsed;
+  };
+  /** Like num, but 0 is allowed: it turns that check off. */
+  const numOrOff = (key: string, fallback: number): number => {
+    const raw = (env[key] ?? '').trim();
+    if (raw === '') return fallback;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new Error(`${key} must be 0 (off) or a positive number, got: ${raw}`);
     }
     return parsed;
   };
@@ -193,6 +208,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     joinAlertHours: num('JOIN_ALERT_HOURS', 24),
     steamApiKey: opt('STEAM_API_KEY'),
     wardogsAppId: num('WARDOGS_APP_ID', 1867240),
-    steamIgnoreAppIds: parseAppIds(env.STEAM_IGNORE_APP_IDS ?? '')
+    steamIgnoreAppIds: parseAppIds('STEAM_IGNORE_APP_IDS', env.STEAM_IGNORE_APP_IDS ?? '', DEFAULT_IGNORED_APP_IDS),
+    steamTotalHours: numOrOff('STEAM_TOTAL_HOURS', 10_000),
+    steamGameHours: numOrOff('STEAM_GAME_HOURS', 1_000),
+    steamCompetitiveAppIds: parseAppIds(
+      'STEAM_COMPETITIVE_APP_IDS',
+      env.STEAM_COMPETITIVE_APP_IDS ?? '',
+      DEFAULT_COMPETITIVE_APP_IDS
+    )
   };
 }

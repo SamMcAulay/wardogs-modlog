@@ -9,7 +9,7 @@ import { pollKills } from './sources/kills.js';
 import { pollKnown } from './sources/known.js';
 import { pollPresence } from './sources/presence.js';
 import { loadState, saveState } from './state.js';
-import { SteamClient } from './steam.js';
+import { SteamClient, VeteranChecker } from './steam.js';
 import { WarconClient } from './warcon.js';
 
 async function main(): Promise<void> {
@@ -39,6 +39,27 @@ async function main(): Promise<void> {
     );
   }
 
+  const steam = config.steamApiKey
+    ? new SteamClient({ apiKey: config.steamApiKey, timeoutMs: config.requestTimeoutMs })
+    : null;
+  // Join tags for Steam veterans. One answer per player per day keeps a busy evening's
+  // reconnects off Steam's rate limit.
+  const veterans =
+    steam && (config.steamTotalHours > 0 || config.steamGameHours > 0)
+      ? new VeteranChecker(
+          steam,
+          {
+            totalHours: config.steamTotalHours,
+            gameHours: config.steamGameHours,
+            competitive: new Set(config.steamCompetitiveAppIds),
+            ignored: new Set(config.steamIgnoreAppIds)
+          },
+          24 * 3_600_000,
+          (message) => log.warn(message)
+        )
+      : undefined;
+  if (!veterans) log.info('joins: Steam veteran tag off (no STEAM_API_KEY, or both hour lines set to 0)');
+
   const poster = new RestPoster(config.discordToken, config.discordChannelId);
   // The live connection that answers Kick buttons. Alerts still post over REST, so a
   // gateway that can't connect costs the buttons, not the alerts.
@@ -51,9 +72,7 @@ async function main(): Promise<void> {
     lookup: {
       warcon: client,
       boards: new BoardCache(client, config.serverIds[0]!),
-      steam: config.steamApiKey
-        ? new SteamClient({ apiKey: config.steamApiKey, timeoutMs: config.requestTimeoutMs })
-        : null,
+      steam,
       serverId: config.serverIds[0]!,
       wardogsAppId: config.wardogsAppId,
       ignoredAppIds: new Set(config.steamIgnoreAppIds),
@@ -108,7 +127,8 @@ async function main(): Promise<void> {
             {
               livePerHour: config.livePerHour,
               liveMinMinutes: config.liveMinMinutes,
-              liveMinKills: config.liveMinKills
+              liveMinKills: config.liveMinKills,
+              veterans
             },
             now
           )

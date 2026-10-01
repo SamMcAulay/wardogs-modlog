@@ -43,6 +43,17 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...base, STEAM_IGNORE_APP_IDS: '1,crosshair' })).toThrow(/crosshair/);
   });
 
+  test('Steam veteran lines default to 10k total and 1k in a competitive game; 0 turns one off', () => {
+    const c = loadConfig(base);
+    expect([c.steamTotalHours, c.steamGameHours]).toEqual([10_000, 1_000]);
+    expect(c.steamCompetitiveAppIds).toEqual(expect.arrayContaining([730, 359550, 252490, 570]));
+    const off = loadConfig({ ...base, STEAM_TOTAL_HOURS: '0', STEAM_GAME_HOURS: '500' });
+    expect([off.steamTotalHours, off.steamGameHours]).toEqual([0, 500]);
+    expect(() => loadConfig({ ...base, STEAM_GAME_HOURS: '-1' })).toThrow(/STEAM_GAME_HOURS/);
+    expect(loadConfig({ ...base, STEAM_COMPETITIVE_APP_IDS: '730' }).steamCompetitiveAppIds).toEqual([730]);
+    expect(() => loadConfig({ ...base, STEAM_COMPETITIVE_APP_IDS: 'cs2' })).toThrow(/STEAM_COMPETITIVE_APP_IDS/);
+  });
+
   test('a Steam key turns on the lookup\'s Steam playtime', () => {
     const c = loadConfig({ ...base, STEAM_API_KEY: ' key ', WARDOGS_APP_ID: '42' });
     expect([c.steamApiKey, c.wardogsAppId]).toEqual(['key', 42]);

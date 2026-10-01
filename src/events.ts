@@ -1,3 +1,5 @@
+import type { VeteranStats } from './steam.js';
+
 /** Every event a source can produce. `at` is ISO. */
 export type ModEvent =
   | TeamKillEvent
@@ -43,7 +45,8 @@ export interface FeedQuietEvent {
 
 /**
  * A player carrying at least one tag has connected (live-alerts spec §4.2, §5). Tier 1
- * when only `watched`; tier 2 with any known tag. At least one flag is true.
+ * when only `watched`; tier 2 with any known tag (sweat, high K/D, Steam veteran). At
+ * least one flag is true.
  */
 export interface PlayerJoinedEvent {
   kind: 'playerJoined';
@@ -60,6 +63,10 @@ export interface PlayerJoinedEvent {
   sweatStats?: SweatStats;
   /** the numbers that put them on the high-K/D list, from its last refresh */
   highKdStats?: KdStats;
+  /** over STEAM_TOTAL_HOURS on Steam, or STEAM_GAME_HOURS in one competitive game. Absent reads as false */
+  steamVeteran?: boolean;
+  /** the Steam hours behind `steamVeteran` */
+  veteranStats?: VeteranStats;
 }
 
 /** A known sweat's record over SWEAT_RANGE. `perHour` leaves seeding out, as the panel does. */

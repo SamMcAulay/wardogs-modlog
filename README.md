@@ -16,7 +16,7 @@ lists refresh hourly), plus a feed-health warning:
 | Tier | Alert | When | Colour | Pings the mod role? |
 | --- | --- | --- | --- | --- |
 | 1 | **Watched player joined** | on connect, every time | blue | no |
-| 2 | **Known sweat / high K/D joined**, with their 30-day kills/hour and playtime, or K/D, kills/deaths and matches | on connect, at most once per `JOIN_ALERT_HOURS` per player | orange | no |
+| 2 | **Known sweat / high K/D / Steam veteran joined**, with their 30-day kills/hour and playtime, K/D, kills/deaths and matches, or Steam hours | on connect, at most once per `JOIN_ALERT_HOURS` per player | orange | no |
 | 3 | **Hot right now**: `LIVE_PER_HOUR`+ kills an hour this match, over at least `LIVE_MIN_MINUTES` and `LIVE_MIN_KILLS` | during a match, once per player per match | red | yes, unless `PING_ON=none` |
 | — | Team kill (with the killer's running count this match) | | purple | no |
 | — | Kick, ban, unban by an admin | | grey | no |
@@ -33,6 +33,13 @@ own figure) and **high K/Ds** (`KD_THRESHOLD`+ over `KD_RANGE`, with `KD_MIN_MAT
 `KD_MIN_MINUTES`; zero deaths is not infinite). A join is tagged from these lists and the
 watchlist. The sweat and high-K/D tags post at most once per `JOIN_ALERT_HOURS` per player
 (across all servers); the watched tag alerts on every connect.
+
+**Steam veterans.** With `STEAM_API_KEY` set, each arrival's Steam library is read (once a day
+per player at most) and they are tagged **Steam veteran** at `STEAM_TOTAL_HOURS`+ hours across
+all games, overlay tools left out (`STEAM_IGNORE_APP_IDS`), or `STEAM_GAME_HOURS`+ in any one
+competitive game (`STEAM_COMPETITIVE_APP_IDS`: CS2, Siege, Rust, Dota 2, PUBG, Apex, Squad and
+others). A private game list, or a Steam error, just leaves the tag off. It shares the sweat
+tags' `JOIN_ALERT_HOURS` limit.
 
 **Hot right now.** Each cycle the bot reads every player's kills in the current match from the
 server summary and counts the kills they gain from when it starts watching them, timed by the
@@ -229,14 +236,17 @@ this, since server labels are things like `EU#1` and `NA#3`.
 | `SWEAT_PER_HOUR` | Kills an hour that marks a known sweat (default `15`) |
 | `SWEAT_RANGE` | Period a sweat's rate is measured over: `7d`, `30d`, `90d` or `all` (default `30d`) |
 | `RATE_MIN_MINUTES` | Playtime needed inside `SWEAT_RANGE` to count as a sweat (default `180`) |
-| `JOIN_ALERT_HOURS` | Hours before a player's sweat / high-K/D tags can post on a join again (default `24`) |
+| `JOIN_ALERT_HOURS` | Hours before a player's sweat / high-K/D / Steam veteran tags can post on a join again (default `24`) |
 | `LIVE_PER_HOUR` | Kills an hour this match that makes a player hot (default `20`) |
 | `LIVE_MIN_MINUTES` | Minutes the bot must have seen them in the match first (default `20`) |
 | `LIVE_MIN_KILLS` | Kills this match needed as well (default `8`) |
 | `FEED_QUIET_MINUTES` | Minutes a configured feed can go quiet, with players on, before a health warning posts (default `30`) |
 | `STEAM_API_KEY` | Optional. `/lookup`'s Steam playtime and `/id/` links; without it those read "not configured" |
 | `WARDOGS_APP_ID` | Wardogs' Steam app id, for `/lookup`'s Wardogs hours (default `1867240`) |
-| `STEAM_IGNORE_APP_IDS` | Steam app ids left out of `/lookup`'s total and top game. Unset or blank: the built-in list of overlay tools (`DEFAULT_IGNORED_APP_IDS` in `src/steam.ts`). Set: exactly these. `none`: nothing is left out |
+| `STEAM_IGNORE_APP_IDS` | Steam app ids left out of `/lookup`'s total and top game, and the Steam veteran total. Unset or blank: the built-in list of overlay tools (`DEFAULT_IGNORED_APP_IDS` in `src/steam.ts`). Set: exactly these. `none`: nothing is left out |
+| `STEAM_TOTAL_HOURS` | Hours across all Steam games that tag a join Steam veteran (default `10000`; `0` turns it off) |
+| `STEAM_GAME_HOURS` | Hours in one competitive game that tag a join Steam veteran (default `1000`; `0` turns it off) |
+| `STEAM_COMPETITIVE_APP_IDS` | The competitive games for `STEAM_GAME_HOURS`. Unset or blank: the built-in list (`DEFAULT_COMPETITIVE_APP_IDS` in `src/steam.ts`). Set: exactly these. `none`: no game counts |
 
 ## Upgrading to live alerts
 

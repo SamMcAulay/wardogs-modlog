@@ -356,6 +356,18 @@ describe('join embed stats', () => {
     ]);
   });
 
+  test("a Steam veteran's join is tier 2 and shows the hours that crossed each line", () => {
+    const e = embed({ steamVeteran: true, veteranStats: { totalMinutes: 740_000, game: { name: 'Counter-Strike 2', minutes: 90_030 } } });
+    expect(e.description!.split('\n')).toEqual([
+      '**Steam veteran** · `765`',
+      'Steam: **12,333 h** all games · **1,500 h** Counter-Strike 2'
+    ]);
+    expect(e.footer).toEqual({ text: 'Tier 2 · known player' });
+    expect(embed({ steamVeteran: true, veteranStats: { game: { name: 'Rust', minutes: 60_000 } } }).description).toContain(
+      'Steam: **1,000 h** Rust'
+    );
+  });
+
   test('a tag dropped by the daily limit shows no numbers for it', () => {
     // escalate() clears sweat when it is still quiet; the stats alone must not show.
     const e = embed({ watched: true, sweat: false, sweatStats });

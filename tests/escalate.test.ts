@@ -123,6 +123,15 @@ describe('join alerts', () => {
     expect(escalate([join({ serverId: 's2', sweat: true })], state, cfg, NOW + HOUR)).toEqual([]);
   });
 
+  test('the Steam veteran tag is a known tag: it stamps, and is dropped within JOIN_ALERT_HOURS', () => {
+    const state = emptyState();
+    expect(escalate([join({ steamVeteran: true })], state, cfg, NOW)).toHaveLength(1);
+    expect(state.joinAlerted['765']).toBe(NOW);
+    expect(escalate([join({ steamVeteran: true })], state, cfg, NOW + HOUR)).toEqual([]);
+    const watched = escalate([join({ watched: true, steamVeteran: true })], state, cfg, NOW + HOUR);
+    expect(watched[0]!.event).toMatchObject({ watched: true, steamVeteran: false });
+  });
+
   test('a join with no tag at all posts nothing', () => {
     expect(escalate([join()], emptyState(), cfg, NOW)).toEqual([]);
   });

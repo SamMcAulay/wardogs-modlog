@@ -23,6 +23,29 @@ export const DEFAULT_IGNORED_APP_IDS: readonly number[] = [
   3301060 // Desktop Mate
 ];
 
+/**
+ * Competitive games whose hours alone make a player a Steam veteran on joining.
+ * `STEAM_COMPETITIVE_APP_IDS` replaces this list.
+ */
+export const DEFAULT_COMPETITIVE_APP_IDS: readonly number[] = [
+  730, // Counter-Strike 2
+  359550, // Tom Clancy's Rainbow Six Siege
+  252490, // Rust
+  570, // Dota 2
+  578080, // PUBG: Battlegrounds
+  1172470, // Apex Legends
+  393380, // Squad
+  686810, // Hell Let Loose
+  594650, // Hunt: Showdown
+  581320, // Insurgency: Sandstorm
+  107410, // Arma 3
+  2357570, // Overwatch 2
+  1422450, // Deadlock
+  2073850, // THE FINALS
+  2767030, // Marvel Rivals
+  1517290 // Battlefield 2042
+];
+
 export interface OwnedGame {
   appid: number;
   name?: string;
@@ -68,6 +91,85 @@ export function playtimeOf(
   };
 }
 
+export interface VeteranConfig {
+  /** STEAM_TOTAL_HOURS: hours across every game, the ignored tools left out. 0 turns it off */
+  totalHours: number;
+  /** STEAM_GAME_HOURS: hours in any one of `competitive`. 0 turns it off */
+  gameHours: number;
+  competitive: ReadonlySet<number>;
+  ignored: ReadonlySet<number>;
+}
+
+/** What made a player a Steam veteran: one or both of the lines they crossed. */
+export interface VeteranStats {
+  /** minutes across every game, set when over STEAM_TOTAL_HOURS */
+  totalMinutes?: number;
+  /** their most-played competitive game, set when over STEAM_GAME_HOURS */
+  game?: { name: string; minutes: number };
+}
+
+/** The lines a game list crosses, or null for none (or a hidden list). */
+export function veteranOf(games: OwnedGame[] | undefined, cfg: VeteranConfig): VeteranStats | null {
+  if (!games) return null;
+  let total = 0;
+  let game: OwnedGame | null = null;
+  for (const g of games) {
+    if (cfg.ignored.has(g.appid)) continue;
+    total += g.playtime_forever;
+    if (cfg.competitive.has(g.appid) && (!game || g.playtime_forever > game.playtime_forever)) game = g;
+  }
+  const out: VeteranStats = {};
+  if (cfg.totalHours > 0 && total >= cfg.totalHours * 60) out.totalMinutes = total;
+  if (game && cfg.gameHours > 0 && game.playtime_forever >= cfg.gameHours * 60) {
+    out.game = { name: game.name ?? `app ${game.appid}`, minutes: game.playtime_forever };
+  }
+  return out.totalMinutes === undefined && !out.game ? null : out;
+}
+
+/** Steam lookups at once when a crowd arrives together (a server filling after a restart). */
+const VETERAN_CONCURRENCY = 4;
+
+/**
+ * Which arrivals are Steam veterans, remembered for `ttlMs` so a reconnect doesn't ask
+ * Steam again. A lookup that fails reads as not a veteran and is not remembered, so the
+ * next join asks again; it never holds up the rest of the join alert.
+ */
+export class VeteranChecker {
+  private readonly cache = new Map<string, { at: number; stats: VeteranStats | null }>();
+
+  constructor(
+    private readonly steam: Pick<SteamClient, 'ownedGames'>,
+    private readonly cfg: VeteranConfig,
+    private readonly ttlMs: number,
+    private readonly warn: (message: string) => void = () => undefined
+  ) {}
+
+  async check(steamIds: string[], now: number): Promise<Map<string, VeteranStats>> {
+    for (const [id, hit] of this.cache) if (now - hit.at >= this.ttlMs) this.cache.delete(id);
+    const out = new Map<string, VeteranStats>();
+    const todo = steamIds.filter((id) => {
+      const hit = this.cache.get(id);
+      if (hit?.stats) out.set(id, hit.stats);
+      return !hit;
+    });
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < todo.length) {
+        const id = todo[next++]!;
+        try {
+          const stats = veteranOf(await this.steam.ownedGames(id), this.cfg);
+          this.cache.set(id, { at: now, stats });
+          if (stats) out.set(id, stats);
+        } catch (err) {
+          this.warn(`steam veteran check for ${id}: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(VETERAN_CONCURRENCY, todo.length) }, worker));
+    return out;
+  }
+}
+
 export class SteamClient {
   constructor(
     private readonly opts: { apiKey: string; timeoutMs?: number; fetchImpl?: typeof fetch }
@@ -95,13 +197,18 @@ export class SteamClient {
     return (await res.json()) as T;
   }
 
-  async playtime(steamId: string, wardogsAppId: number, ignored?: ReadonlySet<number>): Promise<Playtime | null> {
+  /** Every owned game with its playtime; undefined when the profile hides them. */
+  async ownedGames(steamId: string): Promise<OwnedGame[] | undefined> {
     const body = await this.call<{ response?: { games?: OwnedGame[] } }>('IPlayerService/GetOwnedGames/v1', {
       steamid: steamId,
       include_appinfo: '1',
       include_played_free_games: '1'
     });
-    return playtimeOf(body.response?.games, wardogsAppId, ignored);
+    return body.response?.games;
+  }
+
+  async playtime(steamId: string, wardogsAppId: number, ignored?: ReadonlySet<number>): Promise<Playtime | null> {
+    return playtimeOf(await this.ownedGames(steamId), wardogsAppId, ignored);
   }
 
   /** A custom profile URL's name to its SteamID64, or null when no profile has it. */

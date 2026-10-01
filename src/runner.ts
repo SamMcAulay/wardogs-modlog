@@ -206,7 +206,7 @@ async function runServer(deps: CycleDeps, serverId: string): Promise<void> {
     // one match if they are not re-read on the very next cycle.
     for (const d of decisions) {
       if (!delivered.has(retryKey(d.event))) continue;
-      if (d.event.kind === 'playerJoined' && (d.event.sweat || d.event.highKd)) {
+      if (d.event.kind === 'playerJoined' && (d.event.sweat || d.event.highKd || d.event.steamVeteran)) {
         deps.state.joinAlerted[d.event.steamId] = deps.now;
       }
       if (d.event.kind === 'hotPlayer' && !restored.match.alerted.includes(d.event.steamId)) {

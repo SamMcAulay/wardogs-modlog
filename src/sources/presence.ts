@@ -2,6 +2,7 @@ import type { HotPlayerEvent, ModEvent, PlayerJoinedEvent } from '../events.js';
 import type { Baseline, MatchState, ServerState } from '../state.js';
 import type { WarconClient } from '../warcon.js';
 import type { MarksBody, SummaryBody, SummaryPlayer } from '../warcon-types.js';
+import type { VeteranChecker } from '../steam.js';
 
 /** Players per `players/marks` call. */
 export const MARKS_BATCH = 200;
@@ -19,6 +20,8 @@ export interface PresenceConfig {
   liveMinMinutes: number;
   /** LIVE_MIN_KILLS */
   liveMinKills: number;
+  /** tags arrivals who are Steam veterans; unset (no STEAM_API_KEY) tags nobody */
+  veterans?: Pick<VeteranChecker, 'check'>;
 }
 
 /**
@@ -45,7 +48,7 @@ export async function pollPresence(
   const players = summary.live.players ?? [];
   const at = new Date(now).toISOString();
 
-  const joins = await joinEvents(client, serverId, s, players, at);
+  const joins = await joinEvents(client, serverId, s, players, at, cfg.veterans, now);
 
   const next = advanceMatch(s.match, players, summary.live.status?.map ?? null, now);
   // A cold server posts nothing (base spec §7), so it must not mark anyone alerted
@@ -65,13 +68,20 @@ async function joinEvents(
   serverId: string,
   s: ServerState,
   players: SummaryPlayer[],
-  at: string
+  at: string,
+  veteranChecker: PresenceConfig['veterans'],
+  now: number
 ): Promise<PlayerJoinedEvent[]> {
   const previous = new Set(s.presentSteamIds);
   const arrivals = players.filter((p) => !previous.has(p.steamId));
   const sweats = new Set(s.knownSweats);
   const highKd = new Set(s.knownHighKd);
   const id = encodeURIComponent(serverId);
+
+  // Never throws: a Steam lookup that fails just leaves that arrival untagged.
+  const veterans = veteranChecker && arrivals.length > 0
+    ? await veteranChecker.check(arrivals.map((p) => p.steamId), now)
+    : new Map();
 
   const events: PlayerJoinedEvent[] = [];
   for (let i = 0; i < arrivals.length; i += MARKS_BATCH) {
@@ -87,9 +97,10 @@ async function joinEvents(
       const tags = {
         watched: watched.has(p.steamId),
         sweat: sweats.has(p.steamId),
-        highKd: highKd.has(p.steamId)
+        highKd: highKd.has(p.steamId),
+        steamVeteran: veterans.has(p.steamId)
       };
-      if (!tags.watched && !tags.sweat && !tags.highKd) continue;
+      if (!tags.watched && !tags.sweat && !tags.highKd && !tags.steamVeteran) continue;
       // The numbers that put them on each list, for the embed. Only for a tag they carry.
       const known = s.knownStats[p.steamId];
       events.push({
@@ -101,7 +112,8 @@ async function joinEvents(
         ...tags,
         ...(watched.get(p.steamId) ? { watchReason: watched.get(p.steamId) } : {}),
         ...(tags.sweat && known?.sweat ? { sweatStats: known.sweat } : {}),
-        ...(tags.highKd && known?.highKd ? { highKdStats: known.highKd } : {})
+        ...(tags.highKd && known?.highKd ? { highKdStats: known.highKd } : {}),
+        ...(tags.steamVeteran ? { veteranStats: veterans.get(p.steamId) } : {})
       });
     }
   }
