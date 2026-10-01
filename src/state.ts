@@ -5,18 +5,33 @@ import type { KdStats, SweatStats } from './events.js';
 /** Per-server ring of recently seen kill event ids (spec §7). */
 export const SEEN_KILL_CAP = 500;
 
-/** The current match on one server, for the live "hot right now" check (live-alerts spec §3.3). */
+/** Where the live check started counting one player (live-alerts spec §3.1). */
+export interface Baseline {
+  /** epoch ms the count starts from */
+  at: number;
+  /** their scoreboard kills at `at`; only kills above this count */
+  kills: number;
+  /** their scoreboard kills at the last observation; a drop means a new match or a reconnect */
+  last: number;
+}
+
+/**
+ * The current match on one server, for the live "hot right now" check (live-alerts spec
+ * §3.3). Timed by the wall clock: Warcon's match clock is null on every server we watch.
+ */
 export interface MatchState {
-  /** newest `status.matchSeconds` seen; a decrease means a new match. null = none observed yet */
-  lastMatchSeconds: number | null;
-  /** steamId -> match clock when the bot first saw that player in this match */
-  firstSeen: Record<string, number>;
+  /** epoch ms of the last summary the check ran on. null = none observed yet */
+  lastSeenAt: number | null;
+  /** `status.map` at the last observation, when the panel reports one; a change is a new match */
+  map: string | null;
+  /** steamId -> where their count starts */
+  baselines: Record<string, Baseline>;
   /** steamIds already posted as hot this match */
   alerted: string[];
 }
 
 export function emptyMatch(): MatchState {
-  return { lastMatchSeconds: null, firstSeen: {}, alerted: [] };
+  return { lastSeenAt: null, map: null, baselines: {}, alerted: [] };
 }
 
 export interface ServerState {
@@ -151,7 +166,7 @@ export async function loadState(path: string): Promise<State> {
           {
             ...emptyServerState(),
             ...s,
-            match: { ...emptyMatch(), ...(s.match ?? {}) }
+            match: loadMatch(s.match)
           }
         ])
       ),
@@ -163,6 +178,20 @@ export async function loadState(path: string): Promise<State> {
     await rename(path, `${path}.corrupt`).catch(() => undefined);
     return emptyState();
   }
+}
+
+/**
+ * The saved match state, or an empty one for a file written before the wall-clock check.
+ * That shape (`lastMatchSeconds`, `firstSeen`) never ran, since no server reported a clock.
+ */
+function loadMatch(m: Partial<MatchState> | undefined): MatchState {
+  if (!m || typeof m.baselines !== 'object' || m.baselines === null) return emptyMatch();
+  return {
+    lastSeenAt: typeof m.lastSeenAt === 'number' ? m.lastSeenAt : null,
+    map: typeof m.map === 'string' ? m.map : null,
+    baselines: m.baselines,
+    alerted: Array.isArray(m.alerted) ? m.alerted : []
+  };
 }
 
 /** Write to a temp file in the same directory, then rename — rename is atomic. */

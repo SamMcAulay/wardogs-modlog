@@ -1,10 +1,16 @@
 import type { HotPlayerEvent, ModEvent, PlayerJoinedEvent } from '../events.js';
-import type { MatchState, ServerState } from '../state.js';
+import type { Baseline, MatchState, ServerState } from '../state.js';
 import type { WarconClient } from '../warcon.js';
 import type { MarksBody, SummaryBody, SummaryPlayer } from '../warcon-types.js';
 
 /** Players per `players/marks` call. */
 export const MARKS_BATCH = 200;
+
+/**
+ * A longer gap between observations than this (an outage, a restart, a run of failed
+ * reads) starts the live check over: whatever happened in it can't be timed.
+ */
+export const LIVE_STALE_MS = 10 * 60_000;
 
 export interface PresenceConfig {
   /** LIVE_PER_HOUR */
@@ -41,17 +47,11 @@ export async function pollPresence(
 
   const joins = await joinEvents(client, serverId, s, players, at);
 
-  const clock = summary.live.status?.matchSeconds;
-  let hot: HotPlayerEvent[] = [];
-  if (typeof clock === 'number' && Number.isFinite(clock)) {
-    const next = advanceMatch(s.match, players, clock);
-    // A cold server posts nothing (base spec §7), so it must not mark anyone alerted
-    // either: a player already hot when the bot starts is reported on the first warm cycle.
-    if (s.warm) hot = hotPlayers(serverId, next, players, clock, cfg, at);
-    s.match = next;
-  }
-  // A null clock (an idle server, or a build that doesn't report one) means no live
-  // check this cycle, and the match state is neither advanced nor cleared (spec §3.2).
+  const next = advanceMatch(s.match, players, summary.live.status?.map ?? null, now);
+  // A cold server posts nothing (base spec §7), so it must not mark anyone alerted
+  // either: a player already hot when the bot starts is reported on the first warm cycle.
+  const hot = s.warm ? hotPlayers(serverId, next, players, cfg, now, at) : [];
+  s.match = next;
 
   // Only now that every marks batch answered: recording the roster before the marks
   // calls would let a failed call mark an arrival as present, and it would never alert.
@@ -108,27 +108,57 @@ async function joinEvents(
   return events;
 }
 
+/** Whether the scoreboard gives a kill count to judge; some builds leave it out. */
+const hasKills = (p: SummaryPlayer): boolean => typeof p.kills === 'number' && Number.isFinite(p.kills);
+
 /**
- * The match state after this cycle's observation (spec §3.1, §3.2). Pure: the caller
- * commits it only once every read has answered.
+ * The match state after this cycle's observation (live-alerts spec §3.1, §3.2). Pure:
+ * the caller commits it only once every read has answered.
+ *
+ * Every baseline is chosen so a rate can only be understated, never overstated:
+ * - With nothing recent to go on (the first observation, or a gap over LIVE_STALE_MS)
+ *   nobody's kills can be dated, so counting starts now, from the kills they have.
+ * - A count that began since the last observation (a newcomer, a scoreboard that went
+ *   down, a new map) is dated from that observation, from zero. They began some time
+ *   after it, so their time can only be longer than it really was.
+ * - Otherwise a player keeps the baseline they had, even across a disconnect: a
+ *   reconnect whose kills were kept must not be re-dated with those kills counted.
  */
-function advanceMatch(m: MatchState, players: SummaryPlayer[], clock: number): MatchState {
-  // A lower clock than last seen is a new match; no match seen yet is also a first
-  // observation. Either way, everyone present is assumed to have been there from the
-  // start, which can only make their time longer and their rate lower.
-  const newMatch = m.lastMatchSeconds !== null && clock < m.lastMatchSeconds;
-  const firstObservation = m.lastMatchSeconds === null || newMatch;
-  const firstSeen = newMatch ? {} : { ...m.firstSeen };
-  // A newcomer in a match already observed joined some time after the last observation,
-  // and their scoreboard kills cover their whole stay. Dating them from that observation,
-  // not from now, keeps a gap (an outage, a restart, a run of failed reads) from
-  // shortening their time and overstating their rate.
-  const joinedBy = firstObservation ? 0 : (m.lastMatchSeconds ?? clock);
-  for (const p of players) {
-    // A reconnect keeps its original firstSeen.
-    if (!(p.steamId in firstSeen)) firstSeen[p.steamId] = joinedBy;
+function advanceMatch(
+  m: MatchState,
+  players: SummaryPlayer[],
+  map: string | null,
+  now: number
+): MatchState {
+  const counted = players.filter(hasKills);
+  const fresh = m.lastSeenAt === null || now - m.lastSeenAt > LIVE_STALE_MS;
+  if (fresh) {
+    const baselines: Record<string, Baseline> = {};
+    for (const p of counted) baselines[p.steamId] = { at: now, kills: p.kills, last: p.kills };
+    return { lastSeenAt: now, map, baselines, alerted: [] };
   }
-  return { lastMatchSeconds: clock, firstSeen, alerted: newMatch ? [] : [...m.alerted] };
+
+  const since = m.lastSeenAt!;
+  // A new match: the map changed, or most of those still here went down on the scoreboard.
+  const continuing = counted.filter((p) => p.steamId in m.baselines);
+  const dropped = continuing.filter((p) => p.kills < m.baselines[p.steamId]!.last);
+  const newMatch =
+    (map !== null && m.map !== null && map !== m.map) || (dropped.length > 0 && dropped.length * 2 > continuing.length);
+
+  const baselines: Record<string, Baseline> = newMatch ? {} : { ...m.baselines };
+  const alerted = new Set(newMatch ? [] : m.alerted);
+  for (const p of counted) {
+    const prev = baselines[p.steamId];
+    if (prev && p.kills >= prev.last) {
+      baselines[p.steamId] = { ...prev, last: p.kills };
+    } else {
+      // A reset scoreboard on its own (a reconnect that lost its kills) is a fresh count,
+      // so that player can be reported again.
+      if (prev) alerted.delete(p.steamId);
+      baselines[p.steamId] = { at: since, kills: 0, last: p.kills };
+    }
+  }
+  return { lastSeenAt: now, map: map ?? m.map, baselines, alerted: [...alerted] };
 }
 
 /** Players over all three live thresholds, once per match (spec §3). Adds them to `m.alerted`. */
@@ -136,19 +166,20 @@ function hotPlayers(
   serverId: string,
   m: MatchState,
   players: SummaryPlayer[],
-  clock: number,
   cfg: PresenceConfig,
+  now: number,
   at: string
 ): HotPlayerEvent[] {
   const events: HotPlayerEvent[] = [];
   for (const p of players) {
-    if (m.alerted.includes(p.steamId)) continue;
-    // A build whose scoreboard lacks the counts gives nothing to judge.
-    if (typeof p.kills !== 'number' || !Number.isFinite(p.kills)) continue;
-    const minutes = (clock - (m.firstSeen[p.steamId] ?? clock)) / 60;
+    if (m.alerted.includes(p.steamId) || !hasKills(p)) continue;
+    const b = m.baselines[p.steamId];
+    if (!b) continue;
+    const minutes = (now - b.at) / 60_000;
     if (minutes <= 0 || minutes < cfg.liveMinMinutes) continue;
-    if (p.kills < cfg.liveMinKills) continue;
-    const perHour = p.kills / (minutes / 60);
+    const measuredKills = p.kills - b.kills;
+    if (measuredKills < cfg.liveMinKills) continue;
+    const perHour = measuredKills / (minutes / 60);
     if (perHour < cfg.livePerHour) continue;
     m.alerted.push(p.steamId);
     events.push({
@@ -159,6 +190,7 @@ function hotPlayers(
       name: p.name,
       kills: p.kills,
       deaths: typeof p.deaths === 'number' ? p.deaths : 0,
+      measuredKills,
       minutes,
       perHour
     });

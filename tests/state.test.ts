@@ -105,7 +105,7 @@ describe('live-alert state', () => {
     const s = emptyState();
     expect(s.joinAlerted).toEqual({});
     const e = serverState(s, 's1');
-    expect(e.match).toEqual({ lastMatchSeconds: null, firstSeen: {}, alerted: [] });
+    expect(e.match).toEqual({ lastSeenAt: null, map: null, baselines: {}, alerted: [] });
     expect(e.knownSweats).toEqual([]);
     expect(e.knownHighKd).toEqual([]);
     expect(e.knownAt).toBeNull();
@@ -131,7 +131,7 @@ describe('live-alert state', () => {
     expect(s).not.toHaveProperty('baselines');
     expect(s.joinAlerted).toEqual({});
     const e = s.servers.s1!;
-    expect(e.match).toEqual({ lastMatchSeconds: null, firstSeen: {}, alerted: [] });
+    expect(e.match).toEqual({ lastSeenAt: null, map: null, baselines: {}, alerted: [] });
     expect(e.knownSweats).toEqual([]);
     expect(e.knownHighKd).toEqual([]);
     expect(e.knownAt).toBeNull();
@@ -140,12 +140,27 @@ describe('live-alert state', () => {
     expect(e.presentSteamIds).toEqual(['765']);
   });
 
+  test('a match saved by the retired clock-based check loads empty', async () => {
+    const path = join(dir, 'state.json');
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        servers: { s1: { warm: true, match: { lastMatchSeconds: 600, firstSeen: { '765': 0 }, alerted: ['765'] } } },
+        startedAt: 1
+      }),
+      'utf8'
+    );
+    const s = await loadState(path);
+    expect(s.servers.s1!.match).toEqual({ lastSeenAt: null, map: null, baselines: {}, alerted: [] });
+  });
+
   test('join stamps, match state and known lists survive a save and load', async () => {
     const path = join(dir, 'state.json');
     const s = emptyState();
     s.joinAlerted['765'] = 42;
     const e = serverState(s, 's1');
-    e.match = { lastMatchSeconds: 600, firstSeen: { '765': 0, '766': 300 }, alerted: ['765'] };
+    e.match = { lastSeenAt: 600, map: 'Town', baselines: { '765': { at: 0, kills: 2, last: 9 } }, alerted: ['765'] };
     e.knownSweats = ['765'];
     e.knownHighKd = ['766'];
     e.knownAt = 7;

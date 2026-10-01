@@ -195,9 +195,9 @@ describe('sweat-list board', () => {
 });
 
 describe('live-data check', () => {
-  const summaryWith = (matchSeconds: unknown) => ({
+  const summaryWith = (players: unknown[]) => ({
     ok: true,
-    live: { serverId: 's1', ok: true, status: { serverName: 'EU 1', matchSeconds }, players: [] }
+    live: { serverId: 's1', ok: true, status: { serverName: 'EU 1' }, players }
   });
   const run = async (summary: () => unknown) => {
     const client = {
@@ -210,23 +210,21 @@ describe('live-data check', () => {
     return results.find((r) => r.name === 'live data (s1)');
   };
 
-  test('reads ok and active when the summary carries a match clock', async () => {
-    expect(await run(() => summaryWith(754))).toEqual({
+  test('reads ok and active when the scoreboard carries kill counts', async () => {
+    expect(await run(() => summaryWith([{ steamId: '1', name: 'A', kills: 3, deaths: 1 }]))).toEqual({
       name: 'live data (s1)',
       ok: true,
       detail: 'live check active'
     });
   });
 
-  test('reads ok but inactive when there is no match clock', async () => {
-    const inactive = {
-      name: 'live data (s1)',
+  test('says why when it cannot tell, without failing', async () => {
+    expect(await run(() => summaryWith([]))).toMatchObject({ ok: true, detail: expect.stringContaining('server empty') });
+    expect(await run(() => summaryWith([{ steamId: '1', name: 'A' }]))).toMatchObject({
       ok: true,
-      detail: 'no match clock — live alerts inactive until the server reports one'
-    };
-    expect(await run(() => summaryWith(null))).toEqual(inactive);
-    expect(await run(() => ({ ok: true, live: null }))).toEqual(inactive);
-    expect(await run(() => summaryWith(undefined))).toEqual(inactive);
+      detail: expect.stringContaining('no kill counts')
+    });
+    expect(await run(() => ({ ok: true, live: null }))).toMatchObject({ ok: true, detail: expect.stringContaining('no live data') });
   });
 
   test('never fails the deploy, even when the summary itself did not answer', async () => {

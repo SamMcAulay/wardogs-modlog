@@ -59,6 +59,7 @@ describe('eventKey', () => {
         name: 'Alpha',
         kills: 12,
         deaths: 3,
+        measuredKills: 10,
         minutes: 30,
         perHour: 24
       })

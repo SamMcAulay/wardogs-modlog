@@ -73,6 +73,7 @@ const hot = (steamId: string): HotPlayerEvent => ({
   name: steamId === '765' ? 'Alpha' : 'Bravo',
   kills: 12,
   deaths: 3,
+  measuredKills: 10,
   minutes: 30,
   perHour: 24
 });
@@ -607,7 +608,7 @@ describe('live alerts in the cycle', () => {
   test('a failed post rolls back match.alerted and joinAlerted, and re-stamps delivered joins', async () => {
     const state = warmState();
     const presence: CycleDeps['sources']['presence'] = async (_id, s) => {
-      s.match = { lastMatchSeconds: 1800, firstSeen: { '765': 0, '766': 0, '767': 0 }, alerted: ['765', '766'] };
+      s.match = { lastSeenAt: NOW, map: null, baselines: { '765': { at: 0, kills: 0, last: 9 } }, alerted: ['765', '766'] };
       return [joined('765'), joined('767'), hot('765'), hot('766')];
     };
     let calls = 0;
@@ -628,7 +629,7 @@ describe('live alerts in the cycle', () => {
     // 765's did, and stays marked for this match.
     const s = serverState(state, 's1');
     expect(s.match.alerted).toEqual(['765']);
-    expect(s.match.lastMatchSeconds).toBeNull(); // the rest of the match state rolled back
+    expect(s.match.lastSeenAt).toBeNull(); // the rest of the match state rolled back
     expect([...s.postedBeforeFailure].sort()).toEqual(
       ['hotPlayer:s1:765', 'playerJoined:s1:765', 'playerJoined:s1:767'].sort()
     );

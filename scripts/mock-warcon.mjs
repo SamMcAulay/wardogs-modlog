@@ -75,18 +75,18 @@ createServer((req, res) => {
 
   if (p.endsWith('/summary')) {
     const serverId = serverIdFromPath(p);
-    // A match already 30 minutes in when the mock starts, running on from there. The
-    // bot first sees everyone at clock 0 of its first observation, so Alpha's 15 kills
-    // are 30 an hour over 30 minutes: hot enough for the live alert (live-alerts §3).
-    const matchSeconds = 1800 + Math.floor((Date.now() - startedAt) / 1000);
+    // The bot counts from the kills on the board when it first looks. Alpha arrives with
+    // 15 and gains one a minute (60 an hour), so the live alert fires once the bot has
+    // watched for LIVE_MIN_MINUTES (live-alerts §3).
+    const alphaKills = 15 + Math.floor((Date.now() - startedAt) / 60_000);
     return json(res, {
       ok: true,
       live: {
         serverId,
         ok: true,
-        status: { serverName: `Mock ${serverId.slice(0, 8)}`, matchSeconds },
+        status: { serverName: `Mock ${serverId.slice(0, 8)}`, map: 'Mock Town' },
         players: [
-          { steamId: '76561190000000001', name: 'Alpha', faction: 'Valkyra', kills: 15, deaths: 4, cash: 1200, ping: 38 },
+          { steamId: '76561190000000001', name: 'Alpha', faction: 'Valkyra', kills: alphaKills, deaths: 4, cash: 1200, ping: 38 },
           { steamId: '76561190000000003', name: 'Charlie', faction: 'Lonestar', kills: 2, deaths: 6, cash: 300, ping: 52 },
           { steamId: '76561190000000004', name: 'Delta', faction: 'Lonestar', kills: 5, deaths: 3, cash: 800, ping: 45 }
         ]

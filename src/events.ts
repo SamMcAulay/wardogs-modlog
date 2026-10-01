@@ -89,8 +89,11 @@ export interface HotPlayerEvent {
   /** this match's scoreboard */
   kills: number;
   deaths: number;
-  /** minutes since the bot first saw them this match */
+  /** kills since the check started counting them */
+  measuredKills: number;
+  /** minutes since the check started counting them */
   minutes: number;
+  /** measuredKills an hour */
   perHour: number;
 }
 

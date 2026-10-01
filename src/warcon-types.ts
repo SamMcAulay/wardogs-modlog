@@ -72,8 +72,8 @@ export interface SummaryPlayer {
 
 export interface SummaryStatus {
   serverName: string;
-  /** the match clock in seconds; null on an idle server or a build that doesn't report it */
-  matchSeconds: number | null;
+  /** the current map, when the panel reports one */
+  map?: string;
 }
 
 export interface SummaryBody {

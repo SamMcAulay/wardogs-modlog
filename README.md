@@ -34,11 +34,12 @@ own figure) and **high K/Ds** (`KD_THRESHOLD`+ over `KD_RANGE`, with `KD_MIN_MAT
 watchlist. The sweat and high-K/D tags post at most once per `JOIN_ALERT_HOURS` per player
 (across all servers); the watched tag alerts on every connect.
 
-**Hot right now.** Each cycle the bot reads every player's kills in the current match and the
-match clock from the server summary, and times each player from when it first saw them in
-the match. Players already on when it first observes a match (a fresh boot, a new server, a
-new map) are timed from the start of the match, so a rate is never overstated. A server that
-reports no match clock (idle, or an older build) gets no live check.
+**Hot right now.** Each cycle the bot reads every player's kills in the current match from the
+server summary and counts the kills they gain from when it starts watching them, timed by the
+wall clock (Warcon reports no match clock). Kills already on the board when it first looks (a
+fresh boot, a new server, a gap of over 10 minutes) are not counted, and a player who appears
+later counts from zero, timed from the poll before they appeared, so a rate is never
+overstated. A new map, or most of the roster going down on the scoreboard, starts a new match.
 
 Chat is out of scope: the game's feed carries no chat events at all, and Warcon's
 `/v1` surface has no chat-read route, so there is no source to read.

@@ -145,18 +145,23 @@ export async function checkAll(
       results.push({ name: boardName, ok: false, detail: explain(boardPath, err) });
     }
 
-    // The live check (live-alerts spec §9). Never fails a deploy: an empty server
-    // legitimately has no match clock, and a summary that did not answer has already
-    // failed its own check above.
-    const clock = summary?.live?.status?.matchSeconds;
+    // The live check (live-alerts spec §9) needs the scoreboard's kill counts. Never fails
+    // a deploy: an empty server legitimately has none, and a summary that did not answer
+    // has already failed its own check above.
+    const live = summary?.live;
+    const players = live?.players ?? [];
     results.push({
       name: `live data (${id})`,
       ok: true,
       detail: !summaryAnswered
         ? 'skipped — summary did not answer'
-        : typeof clock === 'number'
-          ? 'live check active'
-          : 'no match clock — live alerts inactive until the server reports one'
+        : !live || !live.ok
+          ? 'no live data — live alerts wait until the panel reads the server'
+          : players.length === 0
+            ? 'server empty — scoreboard not checked'
+            : players.some((p) => typeof p.kills === 'number' && Number.isFinite(p.kills))
+              ? 'live check active'
+              : 'scoreboard has no kill counts — live alerts inactive'
     });
 
     // A missing label must never fail a deploy — every alert names its server first
