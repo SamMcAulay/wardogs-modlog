@@ -43,6 +43,7 @@ const hot = (over: Partial<HotPlayerEvent> = {}): HotPlayerEvent => ({
   measuredKills: 10,
   minutes: 30,
   perHour: 24,
+  history: { kind: 'unavailable' },
   ...over
 });
 

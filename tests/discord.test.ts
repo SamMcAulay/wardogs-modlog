@@ -252,7 +252,8 @@ describe('hot embed', () => {
       deaths: 3,
       measuredKills: 14,
       minutes: 32.5,
-      perHour: 25.846
+      perHour: 25.846,
+      history: { kind: 'unavailable' }
     }
   };
 
@@ -266,9 +267,33 @@ describe('hot embed', () => {
     expect(e.fields).toEqual([
       { name: 'Kills/hour', value: '25.8', inline: true },
       { name: 'Measured', value: '14 kills in 33 min', inline: true },
-      { name: 'Scoreboard K / D', value: '14 / 3', inline: true }
+      { name: 'Scoreboard K / D', value: '14 / 3', inline: true },
+      { name: 'History (all time)', value: 'Unavailable (the board could not be read)', inline: false }
     ]);
     expect(m.content).toBe(`<@&${ROLE}> **NA#3**`);
+  });
+});
+
+describe('hot embed history', () => {
+  const historyOf = (history: import('../src/events.js').HotHistory) =>
+    buildMessage(
+      {
+        ping: true,
+        event: {
+          kind: 'hotPlayer', serverId: 's1', at: '2026-09-27T12:00:00.000Z', steamId: '765', name: 'Alpha',
+          kills: 14, deaths: 3, measuredKills: 14, minutes: 30, perHour: 28, history
+        }
+      },
+      links,
+      ROLE
+    ).embeds[0]!.fields!.find((f) => f.name === 'History (all time)')!.value;
+
+  test('says why the match stood out', () => {
+    expect(historyOf({ kind: 'regular', minutes: 6000, perHour: 10, kd: 1.234 })).toBe(
+      '100.0 h · 10.0 kills/h · K/D 1.23 — well above their usual'
+    );
+    expect(historyOf({ kind: 'new', minutes: 150 })).toBe('Only 2.5 h on record');
+    expect(historyOf({ kind: 'new', minutes: null })).toBe('Not on record: new to our servers');
   });
 });
 
@@ -385,7 +410,7 @@ describe('the Kick button', () => {
       buttonId(msg({ kind: 'playerJoined', serverId: 's1', at, steamId: '76561198000000001', name: 'A', watched: false, sweat: true, highKd: false }))
     ).toBe('kick:s1:76561198000000001');
     expect(
-      buttonId(msg({ kind: 'hotPlayer', serverId: 's1', at, steamId: '76561198000000002', name: 'B', kills: 10, deaths: 1, measuredKills: 10, minutes: 20, perHour: 30 }))
+      buttonId(msg({ kind: 'hotPlayer', serverId: 's1', at, steamId: '76561198000000002', name: 'B', kills: 10, deaths: 1, measuredKills: 10, minutes: 20, perHour: 30, history: { kind: 'unavailable' } }))
     ).toBe('kick:s1:76561198000000002');
     expect(
       buttonId(
@@ -443,7 +468,13 @@ describe('the Watch button', () => {
 
   test('sits beside Kick on alerts about a player who may not be watched yet', () => {
     expect(labels({ kind: 'playerJoined', serverId: 's1', at, steamId: '76561198000000001', name: 'A', watched: false, sweat: true, highKd: false })).toEqual(['Kick', 'Watch']);
-    expect(labels({ kind: 'hotPlayer', serverId: 's1', at, steamId: '76561198000000002', name: 'B', kills: 10, deaths: 1, measuredKills: 10, minutes: 20, perHour: 30 })).toEqual(['Kick', 'Watch']);
+    expect(labels({ kind: 'hotPlayer', serverId: 's1', at, steamId: '76561198000000002', name: 'B', kills: 10, deaths: 1, measuredKills: 10, minutes: 20, perHour: 30, history: { kind: 'unavailable' } })).toEqual(['Kick', 'Watch']);
+  });
+
+  test('a Steam veteran join carries no buttons, unless they are also a sweat or high K/D', () => {
+    const base = { kind: 'playerJoined', serverId: 's1', at, steamId: '76561198000000001', name: 'A', watched: false, sweat: false, highKd: false, steamVeteran: true } as const;
+    expect(labels(base)).toBeUndefined();
+    expect(labels({ ...base, sweat: true })).toEqual(['Kick', 'Watch']);
   });
 
   test('a join by someone already on the watchlist carries no buttons at all', () => {

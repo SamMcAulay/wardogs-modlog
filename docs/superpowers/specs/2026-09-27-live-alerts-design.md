@@ -108,6 +108,23 @@ A state file from the clock-based version loads with an empty match. A player is
 `alerted` when the event is emitted. A failed post rolls the whole server entry back, so the
 next cycle re-emits them.
 
+### 3.4 Judged against their own record (added 2026-10-01)
+
+A player over all three thresholds is then checked against their all-time row in the
+organisation's board export (the `/lookup` cache, refreshed hourly), seeding left out:
+
+- **Under `LIVE_ESTABLISHED_HOURS` (10) on record, or not on record:** alerts. A newcomer
+  topping the board is the case this alert exists for.
+- **A regular:** alerts only when the match reaches `LIVE_SPIKE_RATIO` (2) times their all-time
+  kills/hour **and** their all-time K/D (match K/D from the scoreboard, deaths floored at 1). A
+  streak lifts one of these easily; both together is out of character. A regular judged
+  ordinary is not marked alerted, so a run that keeps climbing is judged again each cycle.
+- **The board can't be read:** alerts anyway, saying so. History qualifies an alert; it must
+  never silence one by failing.
+
+The embed adds `History (all time)`: hours, kills/hour and K/D for a regular, or the hours on
+record for someone new.
+
 ## 4. Tier 2: known players joining
 
 ### 4.1 The lists

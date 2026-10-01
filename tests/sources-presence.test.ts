@@ -1,12 +1,13 @@
 import { describe, expect, test } from 'vitest';
-import { LIVE_STALE_MS, MARKS_BATCH, pollPresence, type PresenceConfig } from '../src/sources/presence.js';
+import { LIVE_STALE_MS, MARKS_BATCH, judgeHot, pollPresence, type PresenceConfig } from '../src/sources/presence.js';
+import type { BoardHit } from '../src/board-cache.js';
 import { emptyServerState, type ServerState } from '../src/state.js';
 import type { HotPlayerEvent, ModEvent, PlayerJoinedEvent } from '../src/events.js';
 import type { MarksBody, SummaryBody } from '../src/warcon-types.js';
 import type { WarconClient } from '../src/warcon.js';
 
 const NOW = Date.parse('2026-09-27T12:00:00.000Z');
-const cfg: PresenceConfig = { livePerHour: 20, liveMinMinutes: 20, liveMinKills: 8 };
+const cfg: PresenceConfig = { livePerHour: 20, liveMinMinutes: 20, liveMinKills: 8, liveEstablishedHours: 10, liveSpikeRatio: 2 };
 
 interface P {
   steamId: string;
@@ -184,7 +185,8 @@ describe('hot right now', () => {
         deaths: 2,
         measuredKills: 10,
         minutes: 20,
-        perHour: 30
+        perHour: 30,
+        history: { kind: 'unavailable' } // no board given
       }
     ]);
   });
@@ -283,6 +285,72 @@ describe('hot right now', () => {
     await pollPresence(panel(summary).client, 's1', s, cfg, at(0));
     expect(s.match.baselines).toEqual({});
     expect(hots(await pollPresence(panel(summary).client, 's1', s, cfg, at(30)))).toEqual([]);
+  });
+});
+
+describe('judged against their own record', () => {
+  const row = (hours: number, kills: number, deaths: number, seedHours = 0): BoardHit => ({
+    row: { minutes: hours * 60, seedMinutes: seedHours * 60, kills, deaths, matches: 10 },
+    cutMinutes: null
+  });
+  // This match: 30 kills/hour, scoreboard 12 / 2 (K/D 6).
+  const match = { perHour: 30, kills: 12, deaths: 2 };
+
+  test('a regular at their usual pace is a good run, not an alert', () => {
+    // 100 h at 20 kills/hour, K/D 4: 30/h is 1.5x, K/D 6 is 1.5x.
+    expect(judgeHot(match, row(100, 2000, 500), cfg)).toBeNull();
+  });
+
+  test('a regular well over both their kills/hour and K/D alerts, with the record', () => {
+    // 100 h at 10 kills/hour, K/D 1.
+    expect(judgeHot(match, row(100, 1000, 1000), cfg)).toEqual({ kind: 'regular', minutes: 6000, perHour: 10, kd: 1 });
+  });
+
+  test('over only one of the two is still a run', () => {
+    expect(judgeHot(match, row(100, 1000, 250), cfg)).toBeNull(); // 3x the rate, K/D 6 vs 4
+    expect(judgeHot(match, row(100, 2000, 2000), cfg)).toBeNull(); // K/D 6x, rate 1.5x
+  });
+
+  test('anyone new or off the record always alerts', () => {
+    expect(judgeHot(match, { row: null, cutMinutes: null }, cfg)).toEqual({ kind: 'new', minutes: null });
+    expect(judgeHot(match, row(9, 400, 100), cfg)).toEqual({ kind: 'new', minutes: 540 });
+  });
+
+  test('seeding time is left out of the hours and the rate', () => {
+    // 12 h on record, 3 of them seeding: 9 h played, so still new.
+    expect(judgeHot(match, row(12, 100, 100, 3), cfg)).toEqual({ kind: 'new', minutes: 540 });
+  });
+
+  describe('in the live check', () => {
+    // a reaches 10 kills (deaths 1) over 20 minutes: 30 an hour.
+    const hotRun = async (history: PresenceConfig['history']) => {
+      const s = warm();
+      const c = { ...cfg, history };
+      const at20 = (k: number) => pollPresence(panel(summaryOf([{ steamId: 'a', kills: k, deaths: 1 }])).client, 's1', s, c, at(20));
+      await pollPresence(panel(summaryOf([{ steamId: 'a' }])).client, 's1', s, c, at(0));
+      for (let m = 5; m < 20; m += 5) {
+        await pollPresence(panel(summaryOf([{ steamId: 'a' }])).client, 's1', s, c, at(m));
+      }
+      return { s, events: hots(await at20(10)) };
+    };
+
+    test('a regular on a run posts nothing and stays unmarked, so a bigger run can still alert', async () => {
+      const { s, events } = await hotRun(async () => row(100, 2500, 1000)); // 25/h, K/D 2.5
+      expect(events).toEqual([]);
+      expect(s.match.alerted).toEqual([]);
+    });
+
+    test('the alert carries the record that made it stand out', async () => {
+      const { events } = await hotRun(async () => row(200, 1000, 1000)); // 5/h, K/D 1
+      expect(events[0]!.history).toEqual({ kind: 'regular', minutes: 12_000, perHour: 5, kd: 1 });
+    });
+
+    test('a board that cannot be read lets the alert through, saying so', async () => {
+      const { events } = await hotRun(async () => {
+        throw new Error('export 503');
+      });
+      expect(events.map((e) => e.history)).toEqual([{ kind: 'unavailable' }]);
+    });
   });
 });
 

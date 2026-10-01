@@ -1,4 +1,5 @@
-import type { HotPlayerEvent, ModEvent, PlayerJoinedEvent } from '../events.js';
+import type { BoardHit } from '../board-cache.js';
+import type { HotHistory, HotPlayerEvent, ModEvent, PlayerJoinedEvent } from '../events.js';
 import type { Baseline, MatchState, ServerState } from '../state.js';
 import type { WarconClient } from '../warcon.js';
 import type { MarksBody, SummaryBody, SummaryPlayer } from '../warcon-types.js';
@@ -20,6 +21,12 @@ export interface PresenceConfig {
   liveMinMinutes: number;
   /** LIVE_MIN_KILLS */
   liveMinKills: number;
+  /** LIVE_ESTABLISHED_HOURS: on record for this long, a player is judged against their own history */
+  liveEstablishedHours: number;
+  /** LIVE_SPIKE_RATIO: how far over their own kills/hour and K/D a regular must be */
+  liveSpikeRatio: number;
+  /** a player's all-time record; unset, every hot player alerts unjudged */
+  history?: (steamId: string) => Promise<BoardHit>;
   /** tags arrivals who are Steam veterans; unset (no STEAM_API_KEY) tags nobody */
   veterans?: Pick<VeteranChecker, 'check'>;
 }
@@ -53,7 +60,7 @@ export async function pollPresence(
   const next = advanceMatch(s.match, players, summary.live.status?.map ?? null, now);
   // A cold server posts nothing (base spec §7), so it must not mark anyone alerted
   // either: a player already hot when the bot starts is reported on the first warm cycle.
-  const hot = s.warm ? hotPlayers(serverId, next, players, cfg, now, at) : [];
+  const hot = s.warm ? await hotPlayers(serverId, next, players, cfg, now, at) : [];
   s.match = next;
 
   // Only now that every marks batch answered: recording the roster before the marks
@@ -173,15 +180,43 @@ function advanceMatch(
   return { lastSeenAt: now, map: map ?? m.map, baselines, alerted: [...alerted] };
 }
 
-/** Players over all three live thresholds, once per match (spec §3). Adds them to `m.alerted`. */
-function hotPlayers(
+/**
+ * Whether a player over the live thresholds stands out from their own record (spec §3.4),
+ * and the record to show. null: a regular doing what they usually do, or close enough —
+ * a good run, not an alert. Anyone new or off the record always alerts.
+ */
+export function judgeHot(
+  match: { perHour: number; kills: number; deaths: number },
+  hit: BoardHit,
+  cfg: Pick<PresenceConfig, 'liveEstablishedHours' | 'liveSpikeRatio'>
+): HotHistory | null {
+  const row = hit.row;
+  if (!row) return { kind: 'new', minutes: null };
+  // Seeding is left out, as the panel's own rate does.
+  const played = row.minutes - row.seedMinutes;
+  if (played <= 0 || played < cfg.liveEstablishedHours * 60) return { kind: 'new', minutes: Math.max(played, 0) };
+  const perHour = row.kills / (played / 60);
+  const kd = row.kills / Math.max(row.deaths, 1);
+  const matchKd = match.kills / Math.max(match.deaths, 1);
+  // Both, not either: a streak lifts one easily, and a regular's K/D swings with every death.
+  const spike = match.perHour >= cfg.liveSpikeRatio * perHour && matchKd >= cfg.liveSpikeRatio * kd;
+  return spike ? { kind: 'regular', minutes: played, perHour, kd } : null;
+}
+
+/**
+ * Players over all three live thresholds who also stand out from their own record, once
+ * per match (spec §3). Adds them to `m.alerted`. A regular judged ordinary is not marked,
+ * so a run that keeps climbing is judged again next cycle; the board is cached, so that
+ * costs no request.
+ */
+async function hotPlayers(
   serverId: string,
   m: MatchState,
   players: SummaryPlayer[],
   cfg: PresenceConfig,
   now: number,
   at: string
-): HotPlayerEvent[] {
+): Promise<HotPlayerEvent[]> {
   const events: HotPlayerEvent[] = [];
   for (const p of players) {
     if (m.alerted.includes(p.steamId) || !hasKills(p)) continue;
@@ -193,6 +228,17 @@ function hotPlayers(
     if (measuredKills < cfg.liveMinKills) continue;
     const perHour = measuredKills / (minutes / 60);
     if (perHour < cfg.livePerHour) continue;
+    const deaths = typeof p.deaths === 'number' ? p.deaths : 0;
+    let history: HotHistory | null;
+    try {
+      history = cfg.history
+        ? judgeHot({ perHour, kills: p.kills, deaths }, await cfg.history(p.steamId), cfg)
+        : { kind: 'unavailable' };
+    } catch {
+      // An unreadable board must not silence the alert it was meant to qualify.
+      history = { kind: 'unavailable' };
+    }
+    if (!history) continue;
     m.alerted.push(p.steamId);
     events.push({
       kind: 'hotPlayer',
@@ -201,10 +247,11 @@ function hotPlayers(
       steamId: p.steamId,
       name: p.name,
       kills: p.kills,
-      deaths: typeof p.deaths === 'number' ? p.deaths : 0,
+      deaths,
       measuredKills,
       minutes,
-      perHour
+      perHour,
+      history
     });
   }
   return events;

@@ -60,6 +60,9 @@ async function main(): Promise<void> {
       : undefined;
   if (!veterans) log.info('joins: Steam veteran tag off (no STEAM_API_KEY, or both hour lines set to 0)');
 
+  // One copy of the board export for /lookup and the hot check's history (an hour's cache).
+  const boards = new BoardCache(client, config.serverIds[0]!);
+
   const poster = new RestPoster(config.discordToken, config.discordChannelId);
   // The live connection that answers Kick buttons. Alerts still post over REST, so a
   // gateway that can't connect costs the buttons, not the alerts.
@@ -71,7 +74,7 @@ async function main(): Promise<void> {
     logger: log,
     lookup: {
       warcon: client,
-      boards: new BoardCache(client, config.serverIds[0]!),
+      boards,
       steam,
       serverId: config.serverIds[0]!,
       wardogsAppId: config.wardogsAppId,
@@ -128,6 +131,9 @@ async function main(): Promise<void> {
               livePerHour: config.livePerHour,
               liveMinMinutes: config.liveMinMinutes,
               liveMinKills: config.liveMinKills,
+              liveEstablishedHours: config.liveEstablishedHours,
+              liveSpikeRatio: config.liveSpikeRatio,
+              history: (steamId) => boards.row('all', steamId),
               veterans
             },
             now

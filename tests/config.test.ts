@@ -54,6 +54,13 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...base, STEAM_COMPETITIVE_APP_IDS: 'cs2' })).toThrow(/STEAM_COMPETITIVE_APP_IDS/);
   });
 
+  test('hot players are judged against 10 h of record and twice their usual', () => {
+    const c = loadConfig(base);
+    expect([c.liveEstablishedHours, c.liveSpikeRatio]).toEqual([10, 2]);
+    const o = loadConfig({ ...base, LIVE_ESTABLISHED_HOURS: '0', LIVE_SPIKE_RATIO: '1.5' });
+    expect([o.liveEstablishedHours, o.liveSpikeRatio]).toEqual([0, 1.5]);
+  });
+
   test('a Steam key turns on the lookup\'s Steam playtime', () => {
     const c = loadConfig({ ...base, STEAM_API_KEY: ' key ', WARDOGS_APP_ID: '42' });
     expect([c.steamApiKey, c.wardogsAppId]).toEqual(['key', 42]);

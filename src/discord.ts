@@ -1,6 +1,6 @@
 import { REST } from '@discordjs/rest';
 import { Routes } from 'discord-api-types/v10';
-import type { Decision, ModEvent, PlayerJoinedEvent } from './events.js';
+import type { Decision, HotHistory, ModEvent, PlayerJoinedEvent } from './events.js';
 import { actionRow, type ActionRow, type ButtonComponent } from './player-actions.js';
 
 export interface LinkConfig {
@@ -115,6 +115,18 @@ function joinStatLines(e: PlayerJoinedEvent): string[] {
   return out;
 }
 
+/** A hot player's record, as the line that says why their match stood out. */
+function historyLine(h: HotHistory): string {
+  switch (h.kind) {
+    case 'regular':
+      return `${hours(h.minutes)} · ${h.perHour.toFixed(1)} kills/h · K/D ${h.kd.toFixed(2)} — well above their usual`;
+    case 'new':
+      return h.minutes === null ? 'Not on record: new to our servers' : `Only ${hours(h.minutes)} on record`;
+    case 'unavailable':
+      return 'Unavailable (the board could not be read)';
+  }
+}
+
 function embedFor(e: ModEvent, links: LinkConfig): Embed {
   const base = `${links.panelPublicUrl}/server/${encodeURIComponent(e.serverId)}`;
 
@@ -186,7 +198,8 @@ function embedFor(e: ModEvent, links: LinkConfig): Embed {
         fields: [
           field('Kills/hour', e.perHour.toFixed(1)),
           field('Measured', `${e.measuredKills} kills in ${Math.round(e.minutes)} min`),
-          field('Scoreboard K / D', `${e.kills} / ${e.deaths}`)
+          field('Scoreboard K / D', `${e.kills} / ${e.deaths}`),
+          field('History (all time)', historyLine(e.history), false)
         ],
         footer: { text: 'Tier 3 · hot right now' }
       };
@@ -201,10 +214,10 @@ export function buildMessage(
   const embed = embedFor(d.event, links);
   const label = serverLabel(d.event.serverId, links.serverLabels);
   embed.title = clamp(`${label} · ${embed.title ?? ''}`, 256);
-  // A join by someone already on the watchlist is a heads-up, not a call to act: it
-  // carries no buttons (no Watch, and no Kick to press on sight).
-  const alreadyWatched = d.event.kind === 'playerJoined' && d.event.watched;
-  const target = alreadyWatched ? null : kickTarget(d.event);
+  // A join is a call to act only for a sweat or high K/D not yet watched. A watched
+  // player's join is a heads-up, and Steam hours alone say nothing about play here.
+  const quietJoin = d.event.kind === 'playerJoined' && (d.event.watched || (!d.event.sweat && !d.event.highKd));
+  const target = quietJoin ? null : kickTarget(d.event);
   const components = target ? { components: [actionRow(d.event.serverId, target, { watch: true })] } : {};
   return d.ping
     ? {
