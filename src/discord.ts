@@ -87,21 +87,18 @@ export function joinTags(e: { watched: boolean; sweat: boolean; highKd: boolean 
 const hours = (minutes: number): string => `${(minutes / 60).toFixed(1)} h`;
 
 /**
- * The numbers behind a known player's tags. Keyed off the tag, not the stats: when the
- * daily limit drops a tag, its numbers must not show on their own.
+ * The numbers behind a known player's tags, one line each. Keyed off the tag, not the
+ * stats: when the daily limit drops a tag, its numbers must not show on their own.
  */
-function joinStatFields(e: PlayerJoinedEvent): EmbedField[] {
-  const out: EmbedField[] = [];
+function joinStatLines(e: PlayerJoinedEvent): string[] {
+  const out: string[] = [];
   if (e.sweat && e.sweatStats) {
     const s = e.sweatStats;
-    out.push(field(`Kills/hour (${s.range})`, s.perHour.toFixed(1)));
-    out.push(field(`Playtime (${s.range})`, hours(s.minutes)));
+    out.push(`Kills/hour (${s.range}): **${s.perHour.toFixed(1)}** · ${hours(s.minutes)} played`);
   }
   if (e.highKd && e.highKdStats) {
     const k = e.highKdStats;
-    out.push(field(`K/D (${k.range})`, k.kd.toFixed(2)));
-    out.push(field(`Kills / deaths (${k.range})`, `${k.kills} / ${k.deaths}`));
-    out.push(field(`Matches (${k.range})`, String(k.matches)));
+    out.push(`K/D (${k.range}): **${k.kd.toFixed(2)}** · ${k.kills} / ${k.deaths} · ${k.matches} matches`);
   }
   return out;
 }
@@ -149,21 +146,21 @@ function embedFor(e: ModEvent, links: LinkConfig): Embed {
 
     case 'playerJoined': {
       // One post per connection, at the highest tier its tags reach (live-alerts spec §2).
+      // Joins are the busiest alert, so the card is a few description lines, not fields.
       const known = e.sweat || e.highKd;
+      // The reason is readable when the key holds Notes & watchlist; without one on
+      // record (or without that permission) point at the dossier instead.
+      const reason = !e.watched
+        ? []
+        : e.watchReason
+          ? [`> ${clamp(e.watchReason.replace(/\s+/g, ' '), 500)}`]
+          : ['Open the dossier for the watch reason.'];
       return {
         title: `Joined — ${e.name}`,
         url: `${base}/players/${encodeURIComponent(e.steamId)}`,
         color: known ? COLOR.tier2 : COLOR.tier1,
         timestamp: e.at,
-        // The reason is readable when the key holds Notes & watchlist; without one on
-        // record (or without that permission) point at the dossier instead.
-        ...(e.watched && !e.watchReason ? { description: 'Open the dossier for the watch reason.' } : {}),
-        fields: [
-          field('Tags', joinTags(e)),
-          ...(e.watched && e.watchReason ? [field('Watch reason', e.watchReason, false)] : []),
-          ...joinStatFields(e),
-          field('Steam ID', e.steamId)
-        ],
+        description: [`**${joinTags(e)}** · \`${e.steamId}\``, ...reason, ...joinStatLines(e)].join('\n'),
         footer: { text: known ? 'Tier 2 · known player' : 'Tier 1 · watchlist' }
       };
     }
@@ -192,12 +189,11 @@ export function buildMessage(
   const embed = embedFor(d.event, links);
   const label = serverLabel(d.event.serverId, links.serverLabels);
   embed.title = clamp(`${label} · ${embed.title ?? ''}`, 256);
-  const target = kickTarget(d.event);
-  // No Watch button for someone the alert already says is watched.
+  // A join by someone already on the watchlist is a heads-up, not a call to act: it
+  // carries no buttons (no Watch, and no Kick to press on sight).
   const alreadyWatched = d.event.kind === 'playerJoined' && d.event.watched;
-  const components = target
-    ? { components: [actionRow(d.event.serverId, target, { watch: !alreadyWatched })] }
-    : {};
+  const target = alreadyWatched ? null : kickTarget(d.event);
+  const components = target ? { components: [actionRow(d.event.serverId, target, { watch: true })] } : {};
   return d.ping
     ? {
         content: `<@&${modRoleId}> **${label}**`,

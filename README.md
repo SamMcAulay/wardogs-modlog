@@ -85,7 +85,7 @@ game server's config, bans or triggers.
 
 Alerts about one player carry a red **Kick** button and a blue **Watch** button: joins,
 hot players, and team kills (they act on the killer). A join by someone already on the
-watchlist shows Kick only. Kicks, bans and feed warnings carry no buttons.
+watchlist is a heads-up and carries no buttons, as do kicks, bans and feed warnings.
 
 - **Who can press them:** only members holding `DISCORD_MOD_ROLE_ID`, the same role the
   alerts ping. Anyone else gets a private "only @role can use these buttons" reply.
