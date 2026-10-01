@@ -75,7 +75,8 @@ const hot = (steamId: string): HotPlayerEvent => ({
   deaths: 3,
   measuredKills: 10,
   minutes: 30,
-  perHour: 24
+  perHour: 24,
+  history: { kind: 'unavailable' }
 });
 
 describe('runCycle', () => {

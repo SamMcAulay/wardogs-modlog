@@ -61,7 +61,8 @@ describe('eventKey', () => {
         deaths: 3,
         measuredKills: 10,
         minutes: 30,
-        perHour: 24
+        perHour: 24,
+        history: { kind: 'unavailable' }
       })
     ).toBe('hotPlayer:s1:765:2026-09-27T12:00:00.000Z');
   });

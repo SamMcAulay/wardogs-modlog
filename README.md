@@ -48,6 +48,13 @@ fresh boot, a new server, a gap of over 10 minutes) are not counted, and a playe
 later counts from zero, timed from the poll before they appeared, so a rate is never
 overstated. A new map, or most of the roster going down on the scoreboard, starts a new match.
 
+A player over those lines is then checked against their all-time record across the
+organisation (the board export `/lookup` reads, seeding left out). With under
+`LIVE_ESTABLISHED_HOURS` on record, or none, they alert. A regular alerts only when this match
+is at least `LIVE_SPIKE_RATIO` times their own kills/hour **and** their own K/D, so a good run
+by someone who always plays well stays quiet. If the board can't be read, the alert goes out
+and says so. The alert shows the record it was judged against.
+
 Chat is out of scope: the game's feed carries no chat events at all, and Warcon's
 `/v1` surface has no chat-read route, so there is no source to read.
 
@@ -93,7 +100,8 @@ game server's config, bans or triggers.
 
 Alerts about one player carry a red **Kick** button and a blue **Watch** button: joins,
 hot players, and team kills (they act on the killer). A join by someone already on the
-watchlist is a heads-up and carries no buttons, as do kicks, bans and feed warnings.
+watchlist, or one tagged only Steam veteran, is a heads-up and carries no buttons, as do kicks,
+bans and feed warnings.
 
 - **Who can press them:** only members holding `DISCORD_MOD_ROLE_ID`, the same role the
   alerts ping. Anyone else gets a private "only @role can use these buttons" reply.
@@ -240,6 +248,8 @@ this, since server labels are things like `EU#1` and `NA#3`.
 | `LIVE_PER_HOUR` | Kills an hour this match that makes a player hot (default `20`) |
 | `LIVE_MIN_MINUTES` | Minutes the bot must have seen them in the match first (default `20`) |
 | `LIVE_MIN_KILLS` | Kills this match needed as well (default `8`) |
+| `LIVE_ESTABLISHED_HOURS` | Hours on record (seeding left out) after which a hot player is judged against their own history (default `10`; `0`: everyone with any record is) |
+| `LIVE_SPIKE_RATIO` | How many times their own all-time kills/hour and K/D a regular's match must reach to alert (default `2`) |
 | `FEED_QUIET_MINUTES` | Minutes a configured feed can go quiet, with players on, before a health warning posts (default `30`) |
 | `STEAM_API_KEY` | Optional. `/lookup`'s Steam playtime and `/id/` links; without it those read "not configured" |
 | `WARDOGS_APP_ID` | Wardogs' Steam app id, for `/lookup`'s Wardogs hours (default `1867240`) |

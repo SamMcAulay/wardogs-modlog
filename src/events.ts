@@ -102,7 +102,20 @@ export interface HotPlayerEvent {
   minutes: number;
   /** measuredKills an hour */
   perHour: number;
+  /** their record before this match, which a regular's alert had to stand out from */
+  history: HotHistory;
 }
+
+/**
+ * A hot player's all-time record across the organisation's servers, seeding left out
+ * (live-alerts spec §3.4). `new`: under LIVE_ESTABLISHED_HOURS on record (minutes null:
+ * not on record at all, or below what a full export lists). `unavailable`: the board
+ * couldn't be read, so the alert went out unjudged.
+ */
+export type HotHistory =
+  | { kind: 'regular'; minutes: number; perHour: number; kd: number }
+  | { kind: 'new'; minutes: number | null }
+  | { kind: 'unavailable' };
 
 /** An event plus whether posting it should mention the mod role. */
 export interface Decision {

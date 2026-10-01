@@ -33,6 +33,9 @@ export interface Config {
   livePerHour: number;
   liveMinMinutes: number;
   liveMinKills: number;
+  /** live-alerts spec §3.4: on record this long, a hot player is judged against their own history */
+  liveEstablishedHours: number;
+  liveSpikeRatio: number;
   /** live-alerts spec §4.3: how long a sweat / high-K/D join tag stays quiet after posting */
   joinAlertHours: number;
   /** `/lookup`'s Steam playtime; null leaves those lines reading "not configured" */
@@ -205,6 +208,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     livePerHour: num('LIVE_PER_HOUR', 20),
     liveMinMinutes: num('LIVE_MIN_MINUTES', 20),
     liveMinKills: num('LIVE_MIN_KILLS', 8),
+    liveEstablishedHours: numOrOff('LIVE_ESTABLISHED_HOURS', 10),
+    liveSpikeRatio: num('LIVE_SPIKE_RATIO', 2),
     joinAlertHours: num('JOIN_ALERT_HOURS', 24),
     steamApiKey: opt('STEAM_API_KEY'),
     wardogsAppId: num('WARDOGS_APP_ID', 1867240),
