@@ -130,12 +130,20 @@ export function veteranOf(games: OwnedGame[] | undefined, cfg: VeteranConfig): V
 const VETERAN_CONCURRENCY = 4;
 
 /**
+ * After a failed lookup, how long to stop asking. Each call can wait out the request
+ * timeout, so a Steam outage met with a full server would stall every alert's cycle.
+ */
+export const VETERAN_BACKOFF_MS = 5 * 60_000;
+
+/**
  * Which arrivals are Steam veterans, remembered for `ttlMs` so a reconnect doesn't ask
  * Steam again. A lookup that fails reads as not a veteran and is not remembered, so the
- * next join asks again; it never holds up the rest of the join alert.
+ * next join asks again; it never holds up the rest of the join alert. A failure also
+ * pauses lookups for VETERAN_BACKOFF_MS: arrivals in that time are not tagged.
  */
 export class VeteranChecker {
   private readonly cache = new Map<string, { at: number; stats: VeteranStats | null }>();
+  private pausedUntil = 0;
 
   constructor(
     private readonly steam: Pick<SteamClient, 'ownedGames'>,
@@ -152,16 +160,24 @@ export class VeteranChecker {
       if (hit?.stats) out.set(id, hit.stats);
       return !hit;
     });
+    if (now < this.pausedUntil) return out;
     let next = 0;
+    let failed = false;
     const worker = async (): Promise<void> => {
-      while (next < todo.length) {
+      while (next < todo.length && !failed) {
         const id = todo[next++]!;
         try {
           const stats = veteranOf(await this.steam.ownedGames(id), this.cfg);
           this.cache.set(id, { at: now, stats });
           if (stats) out.set(id, stats);
         } catch (err) {
-          this.warn(`steam veteran check for ${id}: ${err instanceof Error ? err.message : err}`);
+          if (failed) continue; // one warning per outage, not one per worker
+          failed = true;
+          this.pausedUntil = now + VETERAN_BACKOFF_MS;
+          this.warn(
+            `steam veteran check for ${id}: ${err instanceof Error ? err.message : err}` +
+              ` — pausing lookups for ${VETERAN_BACKOFF_MS / 60_000} min`
+          );
         }
       }
     };

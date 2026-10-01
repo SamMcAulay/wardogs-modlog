@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'vitest';
-import { SteamClient, VeteranChecker, playtimeOf, veteranOf, type OwnedGame, type VeteranConfig } from '../src/steam.js';
+import {
+  SteamClient,
+  VETERAN_BACKOFF_MS,
+  VeteranChecker,
+  playtimeOf,
+  veteranOf,
+  type OwnedGame,
+  type VeteranConfig
+} from '../src/steam.js';
 
 const WARDOGS = 1867240;
 
@@ -161,13 +169,21 @@ describe('VeteranChecker', () => {
     expect(f.asked).toEqual(['a', 'b', 'c', 'b']); // expired
   });
 
-  test('a failed lookup tags nobody, is logged, and is asked again next time', async () => {
-    const f = fake({ a: new Error('steam IPlayerService/GetOwnedGames/v1 failed (429)'), b: vet });
+  test('a failed lookup tags nobody, warns once, pauses lookups, then asks again', async () => {
+    const f = fake({ a: new Error('steam IPlayerService/GetOwnedGames/v1 failed (429)'), b: vet, c: vet });
     const warnings: string[] = [];
-    const checker = new VeteranChecker(f.steam, cfg, 1000, (m) => warnings.push(m));
-    expect([...(await checker.check(['a', 'b'], 0)).keys()]).toEqual(['b']);
-    expect(warnings).toEqual(['steam veteran check for a: steam IPlayerService/GetOwnedGames/v1 failed (429)']);
-    await checker.check(['a'], 1);
+    const checker = new VeteranChecker(f.steam, cfg, 60 * 60_000, (m) => warnings.push(m));
+    await checker.check(['a', 'b', 'c'], 0);
+    expect(warnings).toEqual([
+      'steam veteran check for a: steam IPlayerService/GetOwnedGames/v1 failed (429) — pausing lookups for 5 min'
+    ]);
+    // Paused: nobody new is asked, though a remembered answer still counts.
+    const asked = f.asked.length;
+    const paused = await checker.check(['a', 'b', 'c'], VETERAN_BACKOFF_MS - 1);
+    expect(f.asked).toHaveLength(asked);
+    for (const id of paused.keys()) expect(f.asked).toContain(id);
+    // After the pause, a is asked again.
+    await checker.check(['a'], VETERAN_BACKOFF_MS);
     expect(f.asked.filter((id) => id === 'a')).toHaveLength(2);
   });
 });
