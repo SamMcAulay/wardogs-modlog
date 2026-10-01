@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { MARKS_BATCH, pollPresence, type PresenceConfig } from '../src/sources/presence.js';
+import { LIVE_STALE_MS, MARKS_BATCH, pollPresence, type PresenceConfig } from '../src/sources/presence.js';
 import { emptyServerState, type ServerState } from '../src/state.js';
 import type { HotPlayerEvent, ModEvent, PlayerJoinedEvent } from '../src/events.js';
 import type { MarksBody, SummaryBody } from '../src/warcon-types.js';
@@ -15,12 +15,12 @@ interface P {
   deaths?: number;
 }
 
-const summaryOf = (players: P[], matchSeconds: number | null = null): SummaryBody => ({
+const summaryOf = (players: P[], map?: string): SummaryBody => ({
   ok: true,
   live: {
     serverId: 's1',
     ok: true,
-    status: { serverName: 'EU 1', matchSeconds },
+    status: { serverName: 'EU 1', ...(map ? { map } : {}) },
     players: players.map((p) => ({
       steamId: p.steamId,
       name: p.name ?? `P${p.steamId}`,
@@ -69,153 +69,191 @@ const warm = (over: Partial<ServerState> = {}): ServerState => ({ ...emptyServer
 const run = (s: ServerState, summary: SummaryBody, watched: string[] | Record<string, string> = []) =>
   pollPresence(panel(summary, watched).client, 's1', s, cfg, NOW);
 
+/** NOW plus `min` minutes */
+const at = (min: number): number => NOW + min * 60_000;
+/** One cycle `min` minutes after NOW. */
+const runAt = (s: ServerState, min: number, players: P[], map?: string) =>
+  pollPresence(panel(summaryOf(players, map)).client, 's1', s, cfg, at(min));
+
+/** Cycles every half minute from `from` to `to`, with kills from `killsAt(min)`, as the bot polls. */
+async function poll(s: ServerState, from: number, to: number, players: (min: number) => P[]): Promise<HotPlayerEvent[]> {
+  const out: HotPlayerEvent[] = [];
+  for (let min = from; min <= to; min += 0.5) out.push(...hots(await runAt(s, min, players(min))));
+  return out;
+}
+
 const hots = (events: ModEvent[]) =>
   events.filter((e): e is HotPlayerEvent => e.kind === 'hotPlayer');
 const joins = (events: ModEvent[]) =>
   events.filter((e): e is PlayerJoinedEvent => e.kind === 'playerJoined');
 
-describe('when a player was first seen in the match', () => {
-  test('players present at the first observation of a match get firstSeen 0', async () => {
+describe('where counting starts', () => {
+  test('at the first observation, from now and the kills they already have', async () => {
     const s = warm();
-    await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b' }], 900));
-    expect(s.match).toEqual({ lastMatchSeconds: 900, firstSeen: { a: 0, b: 0 }, alerted: [] });
+    await runAt(s, 0, [{ steamId: 'a', kills: 12 }, { steamId: 'b' }]);
+    expect(s.match).toEqual({
+      lastSeenAt: NOW,
+      map: null,
+      baselines: { a: { at: NOW, kills: 12, last: 12 }, b: { at: NOW, kills: 0, last: 0 } },
+      alerted: []
+    });
   });
 
-  test('a player who appears later in the same match gets the last observed clock', async () => {
-    // They joined some time after the previous observation; dating them from it can only
-    // make their time longer and their rate lower.
+  test('a newcomer counts from zero, dated from the previous observation', async () => {
+    // They joined some time after it; dating them from it can only make their time
+    // longer and their rate lower.
     const s = warm();
-    await run(s, summaryOf([{ steamId: 'a' }], 900));
-    await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b' }], 930));
-    expect(s.match.firstSeen).toEqual({ a: 0, b: 900 });
-    expect(s.match.lastMatchSeconds).toBe(930);
+    await runAt(s, 0, [{ steamId: 'a' }]);
+    await runAt(s, 0.5, [{ steamId: 'a' }, { steamId: 'b', kills: 1 }]);
+    expect(s.match.baselines['b']).toEqual({ at: at(0), kills: 0, last: 1 });
+    expect(s.match.lastSeenAt).toBe(at(0.5));
   });
 
-  test('a reconnect mid-match keeps the original firstSeen', async () => {
+  test('a reconnect that kept its kills keeps its baseline', async () => {
+    // Re-dating b from the last observation with 15 kills counted would overstate them.
     const s = warm();
-    await run(s, summaryOf([{ steamId: 'a' }], 300));
-    await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b' }], 600));
-    await run(s, summaryOf([{ steamId: 'a' }], 900)); // b leaves
-    await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b' }], 1200)); // b is back
-    expect(s.match.firstSeen['b']).toBe(300);
+    await runAt(s, 0, [{ steamId: 'a' }, { steamId: 'b', kills: 3 }]);
+    await runAt(s, 10, [{ steamId: 'a' }, { steamId: 'b', kills: 15 }]);
+    await runAt(s, 10.5, [{ steamId: 'a' }]); // b leaves
+    await runAt(s, 11, [{ steamId: 'a' }, { steamId: 'b', kills: 15 }]); // and is back
+    expect(s.match.baselines['b']).toEqual({ at: NOW, kills: 3, last: 15 });
+  });
+
+  test('a reconnect that lost its kills counts again from zero', async () => {
+    const s = warm();
+    await runAt(s, 0, [{ steamId: 'a', kills: 1 }, { steamId: 'b', kills: 1 }, { steamId: 'c', kills: 9 }]);
+    await runAt(s, 5, [{ steamId: 'a', kills: 2 }, { steamId: 'b', kills: 2 }, { steamId: 'c', kills: 0 }]);
+    expect(s.match.baselines['c']).toEqual({ at: NOW, kills: 0, last: 0 });
+    expect(s.match.baselines['a']).toEqual({ at: NOW, kills: 1, last: 2 }); // not a new match
+  });
+
+  test('a gap over LIVE_STALE_MS starts over from now', async () => {
+    const s = warm();
+    await runAt(s, 0, [{ steamId: 'a', kills: 1 }]);
+    const later = (LIVE_STALE_MS + 60_000) / 60_000;
+    await runAt(s, later, [{ steamId: 'a', kills: 9 }]);
+    expect(s.match.baselines['a']).toEqual({ at: at(later), kills: 9, last: 9 });
   });
 
   test('a cold server still records the match, so its first warm cycle is not a first observation', async () => {
     const s = emptyServerState();
-    await run(s, summaryOf([{ steamId: 'a' }], 300));
-    expect(s.match.firstSeen).toEqual({ a: 0 });
+    await runAt(s, 0, [{ steamId: 'a' }]);
     s.warm = true;
-    await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b' }], 330));
-    expect(s.match.firstSeen).toEqual({ a: 0, b: 300 });
+    await runAt(s, 0.5, [{ steamId: 'a' }, { steamId: 'b' }]);
+    expect(s.match.baselines['b']).toEqual({ at: at(0), kills: 0, last: 0 });
+  });
+});
+
+describe('a new match', () => {
+  test('a changed map clears every baseline, so absent players are forgotten too', async () => {
+    const s = warm();
+    // Only one of three still here went down, which alone would not be a new match.
+    const roster = (a: number) => [{ steamId: 'a', kills: a }, { steamId: 'b' }, { steamId: 'c' }];
+    await runAt(s, 0, [...roster(3), { steamId: 'gone', kills: 5 }], 'Town');
+    await runAt(s, 5, roster(20), 'Town');
+    await runAt(s, 5.5, roster(0), 'Harbour');
+    expect(s.match.map).toBe('Harbour');
+    expect(Object.keys(s.match.baselines).sort()).toEqual(['a', 'b', 'c']);
+    expect(s.match.baselines['b']).toEqual({ at: at(5), kills: 0, last: 0 });
+  });
+
+  test('without a map, most of the roster going down on the scoreboard is a new match', async () => {
+    const s = warm();
+    await runAt(s, 0, [{ steamId: 'a', kills: 9 }, { steamId: 'b', kills: 7 }, { steamId: 'gone', kills: 5 }]);
+    await runAt(s, 5, [{ steamId: 'a', kills: 0 }, { steamId: 'b', kills: 1 }]);
+    expect(s.match.baselines).toEqual({
+      a: { at: NOW, kills: 0, last: 0 },
+      b: { at: NOW, kills: 0, last: 1 }
+    });
   });
 });
 
 describe('hot right now', () => {
-  test('hot at exactly the minutes threshold', async () => {
-    // 20 minutes, 10 kills: 30 an hour.
-    const events = await run(warm(), summaryOf([{ steamId: 'a', kills: 10, deaths: 2 }], 1200));
-    expect(hots(events)).toEqual([
+  test('hot once 20 minutes are measured, with the figures', async () => {
+    const s = warm();
+    // a starts with 4 kills and gains one every two minutes: 30 an hour.
+    const events = await poll(s, 0, 20, (min) => [{ steamId: 'a', kills: 4 + Math.floor(min / 2), deaths: 2 }]);
+    expect(events).toEqual([
       {
         kind: 'hotPlayer',
         serverId: 's1',
-        at: new Date(NOW).toISOString(),
+        at: new Date(at(20)).toISOString(),
         steamId: 'a',
         name: 'Pa',
-        kills: 10,
+        kills: 14,
         deaths: 2,
+        measuredKills: 10,
         minutes: 20,
         perHour: 30
       }
     ]);
   });
 
+  test('kills before counting started do not count', async () => {
+    // 30 kills already on the board at the first observation, then a steady 15 an hour.
+    const events = await poll(warm(), 0, 40, (min) => [{ steamId: 'a', kills: 30 + Math.floor(min / 4) }]);
+    expect(events).toEqual([]);
+  });
+
   test('hot at exactly the kills and per-hour thresholds', async () => {
-    // 24 minutes, 8 kills: exactly 20 an hour.
-    const events = await run(warm(), summaryOf([{ steamId: 'a', kills: 8 }], 1440));
-    expect(hots(events).map((e) => [e.kills, e.minutes, e.perHour])).toEqual([[8, 24, 20]]);
-  });
-
-  test('not hot below the minutes threshold', async () => {
-    const events = await run(warm(), summaryOf([{ steamId: 'a', kills: 10 }], 1199));
-    expect(hots(events)).toEqual([]);
-  });
-
-  test('not hot below the kills threshold', async () => {
-    // 20 minutes, 7 kills: 21 an hour, but too few kills.
-    const events = await run(warm(), summaryOf([{ steamId: 'a', kills: 7 }], 1200));
-    expect(hots(events)).toEqual([]);
-  });
-
-  test('not hot below the per-hour threshold', async () => {
-    // 30 minutes, 9 kills: 18 an hour.
-    const events = await run(warm(), summaryOf([{ steamId: 'a', kills: 9 }], 1800));
-    expect(hots(events)).toEqual([]);
-  });
-
-  test('time is counted from firstSeen, not from the start of the match', async () => {
+    // 8 kills in 24 minutes: exactly 20 an hour.
     const s = warm();
-    await run(s, summaryOf([{ steamId: 'a' }], 600));
-    // b appears at 1200, so is dated from the last observation, 600. At 1500 that is 15
-    // minutes (60 an hour from the match start would read hot); at 1800 it is 20
-    // minutes, and 10 kills is 30 an hour.
-    await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b', kills: 10 }], 1200));
-    expect(hots(await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b', kills: 10 }], 1500)))).toEqual([]);
-    const events = await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'b', kills: 10 }], 1800));
-    expect(hots(events).map((e) => [e.steamId, e.minutes, e.perHour])).toEqual([['b', 20, 30]]);
+    await runAt(s, 0, [{ steamId: 'a' }]);
+    for (let m = 5; m < 24; m += 5) await runAt(s, m, [{ steamId: 'a' }]);
+    const events = hots(await runAt(s, 24, [{ steamId: 'a', kills: 8 }]));
+    expect(events.map((e) => [e.measuredKills, e.minutes, e.perHour])).toEqual([[8, 24, 20]]);
   });
 
-  test('a gap in observation cannot make a newcomer read hot', async () => {
-    // Last seen at 600; the panel was unreachable until 2400. c joined somewhere in that
-    // gap and already has 9 kills. Dated from 2400, c would need only 2 more kills in
-    // 20 minutes to read 33 an hour; dated from 600, at 3600 c's 11 kills over 50 minutes
-    // is 13 an hour — correctly not hot.
+  test.each([
+    ['the minutes threshold', 19.5, 10],
+    ['the kills threshold (21 an hour)', 20, 7],
+    ['the per-hour threshold (18 an hour)', 30, 9]
+  ])('not hot below %s', async (_name, minutes, kills) => {
     const s = warm();
-    await run(s, summaryOf([{ steamId: 'a' }], 600));
-    await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'c', kills: 9 }], 2400));
-    expect(s.match.firstSeen['c']).toBe(600);
-    expect(hots(await run(s, summaryOf([{ steamId: 'a' }, { steamId: 'c', kills: 11 }], 3600)))).toEqual([]);
+    await runAt(s, 0, [{ steamId: 'a' }]);
+    // A stale gap would reset; stay inside it with an observation every few minutes.
+    for (let m = 5; m < minutes; m += 5) await runAt(s, m, [{ steamId: 'a' }]);
+    expect(hots(await runAt(s, minutes, [{ steamId: 'a', kills }]))).toEqual([]);
+  });
+
+  test('a newcomer is timed from the observation before they appeared', async () => {
+    const s = warm();
+    await runAt(s, 0, [{ steamId: 'a' }]);
+    // b appears at 0.5 with 2 kills, dated from 0, and reaches 10 at 15 minutes
+    // (40 an hour, but too soon); at 20 minutes 10 kills is 30 an hour.
+    const events = await poll(s, 0.5, 20, (min) => [{ steamId: 'a' }, { steamId: 'b', kills: min < 15 ? 2 : 10 }]);
+    expect(events.map((e) => [e.steamId, e.minutes, e.perHour])).toEqual([['b', 20, 30]]);
   });
 
   test('a player posts once per match', async () => {
-    const s = warm({ presentSteamIds: ['a'] });
-    const first = await run(s, summaryOf([{ steamId: 'a', kills: 10 }], 1200));
-    expect(hots(first)).toHaveLength(1);
+    const s = warm();
+    await runAt(s, 0, [{ steamId: 'a' }]);
+    for (let m = 5; m < 20; m += 5) await runAt(s, m, [{ steamId: 'a' }]);
+    expect(hots(await runAt(s, 20, [{ steamId: 'a', kills: 10 }]))).toHaveLength(1);
     expect(s.match.alerted).toEqual(['a']);
-    const again = await run(s, summaryOf([{ steamId: 'a', kills: 20 }], 1500));
-    expect(hots(again)).toEqual([]);
+    expect(hots(await runAt(s, 25, [{ steamId: 'a', kills: 20 }]))).toEqual([]);
   });
 
-  test('a match boundary resets, so the same player can alert again in the next match', async () => {
-    const s = warm({ presentSteamIds: ['a'] });
-    expect(hots(await run(s, summaryOf([{ steamId: 'a', kills: 10 }], 1200)))).toHaveLength(1);
-
-    // The clock went backwards: a new match. Everyone present counts from 0 again.
-    const boundary = await run(s, summaryOf([{ steamId: 'a', kills: 0 }], 60));
-    expect(hots(boundary)).toEqual([]);
-    expect(s.match).toEqual({ lastMatchSeconds: 60, firstSeen: { a: 0 }, alerted: [] });
-
-    expect(hots(await run(s, summaryOf([{ steamId: 'a', kills: 10 }], 1200)))).toHaveLength(1);
-  });
-
-  test('a null clock skips the live check without touching the match state', async () => {
-    const s = warm({ presentSteamIds: ['a'] });
-    await run(s, summaryOf([{ steamId: 'a', kills: 1 }], 600));
-    const before = structuredClone(s.match);
-    const events = await run(s, summaryOf([{ steamId: 'a', kills: 50 }, { steamId: 'b' }], null));
-    expect(hots(events)).toEqual([]);
-    expect(s.match).toEqual(before);
+  test('a new match clears alerted, so the same player can alert again', async () => {
+    const s = warm();
+    const rate = (start: number) => (min: number) => [{ steamId: 'a', kills: Math.max(0, Math.floor((min - start) / 2)) }];
+    expect(await poll(s, 0, 20, rate(0))).toHaveLength(1);
+    // The board resets at 25: a new match.
+    await runAt(s, 25, [{ steamId: 'a', kills: 0 }]);
+    expect(s.match.alerted).toEqual([]);
+    expect(await poll(s, 25.5, 46, rate(25))).toHaveLength(1);
   });
 
   test('a summary with no live data changes nothing, so players are not re-reported as joining', async () => {
     const s = warm({ presentSteamIds: ['a'] });
-    await run(s, summaryOf([{ steamId: 'a' }], 600));
+    await runAt(s, 0, [{ steamId: 'a' }]);
     const before = structuredClone(s.match);
     const events = await run(s, { ok: true, live: null }, ['a']);
     expect(events).toEqual([]);
     expect(s.presentSteamIds).toEqual(['a']);
     expect(s.match).toEqual(before);
     // The next good read still sees a, already present: not a join.
-    expect(joins(await run(s, summaryOf([{ steamId: 'a' }], 630), ['a']))).toEqual([]);
+    expect(joins(await runAt(s, 0.5, [{ steamId: 'a' }]))).toEqual([]);
   });
 
   test('a summary whose live read failed changes nothing either', async () => {
@@ -227,20 +265,24 @@ describe('hot right now', () => {
 
   test('a cold server posts no hot player and does not mark one alerted', async () => {
     const s = emptyServerState();
-    const events = await run(s, summaryOf([{ steamId: 'a', kills: 10 }], 1200));
-    expect(hots(events)).toEqual([]);
+    await runAt(s, 0, [{ steamId: 'a' }]);
+    for (let m = 5; m < 20; m += 5) await runAt(s, m, [{ steamId: 'a' }]);
+    expect(hots(await runAt(s, 20, [{ steamId: 'a', kills: 10 }]))).toEqual([]);
     expect(s.match.alerted).toEqual([]);
     // Once warm, the same player still hot is reported.
     s.warm = true;
-    expect(hots(await run(s, summaryOf([{ steamId: 'a', kills: 11 }], 1230)))).toHaveLength(1);
+    expect(hots(await runAt(s, 20.5, [{ steamId: 'a', kills: 11 }]))).toHaveLength(1);
   });
 
   test('a player the scoreboard gives no kill count for is skipped', async () => {
-    const summary = summaryOf([{ steamId: 'a' }], 1200);
+    const s = warm({ presentSteamIds: ['a'] });
+    const summary = summaryOf([{ steamId: 'a' }]);
     const player = summary.live!.players[0]! as unknown as Record<string, unknown>;
     delete player['kills'];
     delete player['deaths'];
-    expect(hots(await run(warm({ presentSteamIds: ['a'] }), summary))).toEqual([]);
+    await pollPresence(panel(summary).client, 's1', s, cfg, at(0));
+    expect(s.match.baselines).toEqual({});
+    expect(hots(await pollPresence(panel(summary).client, 's1', s, cfg, at(30)))).toEqual([]);
   });
 });
 
@@ -338,17 +380,18 @@ describe('join alerts', () => {
 
   test('a failed marks call leaves the roster and match uncommitted, so the next cycle still reports', async () => {
     const s = warm({ presentSteamIds: ['a'] });
-    await run(s, summaryOf([{ steamId: 'a' }], 300));
+    await runAt(s, 0, [{ steamId: 'a' }]);
+    for (let m = 5; m < 20; m += 5) await runAt(s, m, [{ steamId: 'a' }]);
     const match = structuredClone(s.match);
-    const summary = summaryOf([{ steamId: 'a', kills: 20 }, { steamId: 'c' }], 1200);
+    const summary = summaryOf([{ steamId: 'a', kills: 20 }, { steamId: 'c' }]);
 
-    await expect(pollPresence(panel(summary, ['c'], true).client, 's1', s, cfg, NOW)).rejects.toThrow(
+    await expect(pollPresence(panel(summary, ['c'], true).client, 's1', s, cfg, at(20))).rejects.toThrow(
       'marks 503'
     );
     expect(s.presentSteamIds).toEqual(['a']);
     expect(s.match).toEqual(match); // the hot player is not marked alerted with no event out
 
-    const events = await run(s, summary, ['c']);
+    const events = await pollPresence(panel(summary, ['c']).client, 's1', s, cfg, at(20));
     expect(joins(events).map((e) => e.steamId)).toEqual(['c']);
     expect(hots(events).map((e) => e.steamId)).toEqual(['a']);
     expect(s.presentSteamIds).toEqual(['a', 'c']);

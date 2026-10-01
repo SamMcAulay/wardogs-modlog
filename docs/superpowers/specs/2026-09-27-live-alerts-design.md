@@ -31,15 +31,21 @@ because a list was refreshed.
 
 ## 3. Tier 3: hot right now
 
-Every cycle (`POLL_INTERVAL_MS`, 30 s), the bot already reads each server's summary. The summary
-carries each player's `kills` and `deaths` in the current match, and `status.matchSeconds`, the
-match clock.
+> **Amended 2026-10-01.** The first version timed players with `status.matchSeconds`, the match
+> clock. Every deploy's preflight showed it null on all six servers, so tier 3 never ran. The
+> check is now timed by the wall clock and needs only the scoreboard's kills.
 
-For each player on the server, the bot works out:
+Every cycle (`POLL_INTERVAL_MS`, 30 s), the bot already reads each server's summary. The summary
+carries each player's `kills` and `deaths` in the current match, and `status.map` where the panel
+reports it.
+
+For each player on the server, the bot keeps a **baseline**: a time and a kill count to count
+from. It works out:
 
 ```
-minutesInMatch = (matchSeconds - firstSeen) / 60
-perHour        = kills / (minutesInMatch / 60)
+minutes       = (now - baseline.at) / 60000
+measuredKills = kills - baseline.kills
+perHour       = measuredKills / (minutes / 60)
 ```
 
 A player is **hot** when all three hold:
@@ -47,39 +53,38 @@ A player is **hot** when all three hold:
 | Setting | Default | Condition |
 | --- | --- | --- |
 | `LIVE_PER_HOUR` | 20 | `perHour ≥ LIVE_PER_HOUR` |
-| `LIVE_MIN_MINUTES` | 20 | `minutesInMatch ≥ LIVE_MIN_MINUTES` |
-| `LIVE_MIN_KILLS` | 8 | `kills ≥ LIVE_MIN_KILLS` |
+| `LIVE_MIN_MINUTES` | 20 | `minutes ≥ LIVE_MIN_MINUTES` |
+| `LIVE_MIN_KILLS` | 8 | `measuredKills ≥ LIVE_MIN_KILLS` |
 
 The default is 20 rather than the 15 that marks a sustained sweat, because one match is a short,
 noisy window. All three are settings. A hot player posts **once per match**.
 
-### 3.1 When a player was first seen in the match
+### 3.1 Baselines
 
-`firstSeen` is the match clock when the bot first saw that player in the current match. The
-rules are chosen so the bot never *overstates* a rate:
+The rules are chosen so the bot never *overstates* a rate:
 
-- **Players present at the bot's first observation of a match** get `firstSeen = 0`. That covers a
-  fresh boot, a server newly added, and the first cycle after a match boundary. The bot can't
-  know when they joined, so it assumes the start of the match. That makes their time longer and
-  their rate lower.
-- **Players who appear later in the same match** get the match clock of the *previous*
-  observation (amended 2026-09-28). They joined some time after it, and their scoreboard kills
-  cover their whole stay. So a gap in observation (an outage, a restart, a run of failed reads)
-  can only lengthen their time, never shorten it.
+- **Nothing recent to go on** (the first observation, or more than `LIVE_STALE_MS`, 10 minutes,
+  since the last one): nobody's kills can be dated, so everyone counts from now, from the kills
+  they already have. This under-counts a player who was already hot; it never over-counts.
+- **A count that began since the last observation** (a newcomer, a player whose scoreboard went
+  down, everyone on a new match) counts from zero, dated from the *previous* observation. They
+  began some time after it, so their time can only be longer than it really was.
+- **Otherwise a player keeps their baseline**, including across a disconnect. A reconnect whose
+  kills were kept must not be re-dated with those kills counted, so baselines of absent players
+  are kept until the match ends.
 - **A summary with no live data, or one the panel marks failed,** changes nothing: not the
   roster and not the match. An empty roster would re-report everyone as joining on the next
   good read.
+- **A player the scoreboard gives no kill count for** gets no baseline and is never judged.
 - **Lists that have never loaded** (`knownAt` null) are refreshed every cycle until they load,
   not only on the K/D schedule.
-- **A reconnect mid-match keeps the original `firstSeen`.** The scoreboard may reset their kills,
-  which again only lowers the rate.
 
-### 3.2 Match boundaries and missing data
+### 3.2 Match boundaries
 
-- **A new match** is detected when `matchSeconds` is lower than the last value seen for that
-  server. It clears `firstSeen` and the record of who has already been alerted this match.
-- **A null `matchSeconds`** means an idle server or a build that doesn't report it. There is no
-  live check that cycle, and the bot neither advances nor clears the match state.
+A new match is detected when `status.map` changes, or when more than half of the players who
+have a baseline and are still present show fewer kills than last seen. It clears every baseline
+(present or not) and the record of who has been alerted. One player's scoreboard going down on
+its own re-baselines only them, and they may be reported again.
 
 ### 3.3 State
 
@@ -88,14 +93,20 @@ by the runner's rollback (base spec §9):
 
 ```ts
 match: {
-  lastMatchSeconds: number | null;   // null = no match observed yet
-  firstSeen: Record<string, number>; // steamId -> match clock when first seen
-  alerted: string[];                 // steamIds already posted as hot this match
+  lastSeenAt: number | null;            // epoch ms; null = nothing observed yet
+  map: string | null;                   // status.map at the last observation
+  baselines: Record<string, {           // steamId ->
+    at: number;                         //   epoch ms the count starts from
+    kills: number;                      //   kills at that point
+    last: number;                       //   kills at the last observation
+  }>;
+  alerted: string[];                    // steamIds already posted as hot this match
 }
 ```
 
-A player is added to `alerted` when the event is emitted. A failed post rolls the whole server
-entry back, so the next cycle re-emits them.
+A state file from the clock-based version loads with an empty match. A player is added to
+`alerted` when the event is emitted. A failed post rolls the whole server entry back, so the
+next cycle re-emits them.
 
 ## 4. Tier 2: known players joining
 
@@ -169,8 +180,9 @@ interface HotPlayerEvent {
   server entry, refreshed with them.
   - Watched only: tier 1, blue, footer `Tier 1 · watchlist`, and the existing dossier hint.
   - Any known tag: tier 2, orange, footer `Tier 2 · known player`.
-- **hotPlayer:** titled `Hot right now — {name}`, with fields `Kills / deaths`,
-  `Minutes this match` and `Kills/hour`. Tier 3, red, footer `Tier 3 · hot right now`.
+- **hotPlayer:** titled `Hot right now — {name}`, with fields `Kills/hour`, `Measured`
+  (`{measuredKills} kills in {minutes} min`) and `Scoreboard K / D`. Tier 3, red, footer
+  `Tier 3 · hot right now`.
 - Both link to the player's panel page.
 
 ## 6. Sources and scheduling
@@ -220,10 +232,11 @@ it to get tier-3 pings.
 - **Removed:** the dossier check, since there are no more dossier reads.
 - **Kept:** the `perHour` board check, which the sweat list needs.
 - **Added:** a live-data check per server. It reads the summary and reports `ok` with detail:
-  - `live check active` when `status.matchSeconds` is a number;
-  - `no match clock — live alerts inactive until the server reports one` when it isn't.
+  - `live check active` when a player on the scoreboard has a kill count;
+  - `scoreboard has no kill counts — live alerts inactive` when players are on but none has one;
+  - `server empty — scoreboard not checked`, or `no live data — …`, when it can't tell.
 
-  It never fails a deploy, because an empty server legitimately has no match.
+  It never fails a deploy, because an empty server legitimately has no scoreboard.
 
 ## 10. Testing
 
@@ -256,7 +269,7 @@ it to get tier-3 pings.
 - **Config:** the new defaults, `PING_ON` values, and the removed settings no longer on `Config`.
 - **Discord:** the tier, colour and footer for each join combination and for `hotPlayer`; the
   tags text.
-- **Preflight:** the live-data check reads `ok` both with and without a match clock.
+- **Preflight:** the live-data check reads `ok` whether or not the scoreboard has kill counts.
 
 ## 11. Out of scope
 

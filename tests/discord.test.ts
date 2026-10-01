@@ -250,6 +250,7 @@ describe('hot embed', () => {
       name: 'Alpha',
       kills: 14,
       deaths: 3,
+      measuredKills: 14,
       minutes: 32.5,
       perHour: 25.846
     }
@@ -263,9 +264,9 @@ describe('hot embed', () => {
     expect(e.footer).toEqual({ text: 'Tier 3 · hot right now' });
     expect(e.url).toBe('https://panel.example.com/server/s1/players/765');
     expect(e.fields).toEqual([
-      { name: 'Kills / deaths', value: '14 / 3', inline: true },
-      { name: 'Minutes this match', value: '33', inline: true },
-      { name: 'Kills/hour', value: '25.8', inline: true }
+      { name: 'Kills/hour', value: '25.8', inline: true },
+      { name: 'Measured', value: '14 kills in 33 min', inline: true },
+      { name: 'Scoreboard K / D', value: '14 / 3', inline: true }
     ]);
     expect(m.content).toBe(`<@&${ROLE}> **NA#3**`);
   });
@@ -372,7 +373,7 @@ describe('the Kick button', () => {
       buttonId(msg({ kind: 'playerJoined', serverId: 's1', at, steamId: '76561198000000001', name: 'A', watched: false, sweat: true, highKd: false }))
     ).toBe('kick:s1:76561198000000001');
     expect(
-      buttonId(msg({ kind: 'hotPlayer', serverId: 's1', at, steamId: '76561198000000002', name: 'B', kills: 10, deaths: 1, minutes: 20, perHour: 30 }))
+      buttonId(msg({ kind: 'hotPlayer', serverId: 's1', at, steamId: '76561198000000002', name: 'B', kills: 10, deaths: 1, measuredKills: 10, minutes: 20, perHour: 30 }))
     ).toBe('kick:s1:76561198000000002');
     expect(
       buttonId(
@@ -430,7 +431,7 @@ describe('the Watch button', () => {
 
   test('sits beside Kick on alerts about a player who may not be watched yet', () => {
     expect(labels({ kind: 'playerJoined', serverId: 's1', at, steamId: '76561198000000001', name: 'A', watched: false, sweat: true, highKd: false })).toEqual(['Kick', 'Watch']);
-    expect(labels({ kind: 'hotPlayer', serverId: 's1', at, steamId: '76561198000000002', name: 'B', kills: 10, deaths: 1, minutes: 20, perHour: 30 })).toEqual(['Kick', 'Watch']);
+    expect(labels({ kind: 'hotPlayer', serverId: 's1', at, steamId: '76561198000000002', name: 'B', kills: 10, deaths: 1, measuredKills: 10, minutes: 20, perHour: 30 })).toEqual(['Kick', 'Watch']);
   });
 
   test('a join by someone already on the watchlist carries no buttons at all', () => {

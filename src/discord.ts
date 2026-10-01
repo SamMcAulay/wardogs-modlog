@@ -172,9 +172,9 @@ function embedFor(e: ModEvent, links: LinkConfig): Embed {
         color: COLOR.tier3,
         timestamp: e.at,
         fields: [
-          field('Kills / deaths', `${e.kills} / ${e.deaths}`),
-          field('Minutes this match', String(Math.round(e.minutes))),
-          field('Kills/hour', e.perHour.toFixed(1))
+          field('Kills/hour', e.perHour.toFixed(1)),
+          field('Measured', `${e.measuredKills} kills in ${Math.round(e.minutes)} min`),
+          field('Scoreboard K / D', `${e.kills} / ${e.deaths}`)
         ],
         footer: { text: 'Tier 3 · hot right now' }
       };
