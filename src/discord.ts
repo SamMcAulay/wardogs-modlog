@@ -75,16 +75,20 @@ const field = (name: string, value: string, inline = true): EmbedField => ({
 const weapon = (cause: string | null): string => (cause ? (cause.split('.').pop() ?? cause) : '—');
 
 /** A join's tags as staff read them, e.g. `watched · sweat` (live-alerts spec §5). */
-export function joinTags(e: { watched: boolean; sweat: boolean; highKd: boolean }): string {
+export function joinTags(e: { watched: boolean; sweat: boolean; highKd: boolean; steamVeteran?: boolean }): string {
   const tags: string[] = [];
   if (e.watched) tags.push('watched');
   if (e.sweat) tags.push('sweat');
   if (e.highKd) tags.push('high K/D');
+  if (e.steamVeteran) tags.push('Steam veteran');
   return tags.join(' · ');
 }
 
 /** 600 -> `10.0 h` */
 const hours = (minutes: number): string => `${(minutes / 60).toFixed(1)} h`;
+
+/** 740000 -> `12,333 h`: Steam totals run to thousands, where a decimal is noise. */
+const steamHours = (minutes: number): string => `${Math.floor(minutes / 60).toLocaleString('en-US')} h`;
 
 /**
  * The numbers behind a known player's tags, one line each. Keyed off the tag, not the
@@ -99,6 +103,14 @@ function joinStatLines(e: PlayerJoinedEvent): string[] {
   if (e.highKd && e.highKdStats) {
     const k = e.highKdStats;
     out.push(`K/D (${k.range}): **${k.kd.toFixed(2)}** · ${k.kills} / ${k.deaths} · ${k.matches} matches`);
+  }
+  if (e.steamVeteran && e.veteranStats) {
+    const v = e.veteranStats;
+    const parts = [
+      ...(v.totalMinutes !== undefined ? [`**${steamHours(v.totalMinutes)}** all games`] : []),
+      ...(v.game ? [`**${steamHours(v.game.minutes)}** ${v.game.name}`] : [])
+    ];
+    out.push(`Steam: ${parts.join(' · ')}`);
   }
   return out;
 }
@@ -147,7 +159,7 @@ function embedFor(e: ModEvent, links: LinkConfig): Embed {
     case 'playerJoined': {
       // One post per connection, at the highest tier its tags reach (live-alerts spec §2).
       // Joins are the busiest alert, so the card is a few description lines, not fields.
-      const known = e.sweat || e.highKd;
+      const known = e.sweat || e.highKd || e.steamVeteran;
       // The reason is readable when the key holds Notes & watchlist; without one on
       // record (or without that permission) point at the dossier instead.
       const reason = !e.watched

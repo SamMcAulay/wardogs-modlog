@@ -9,7 +9,7 @@ export const PING_KINDS = ['live'] as const;
 export type PingKind = (typeof PING_KINDS)[number];
 
 export interface EscalateConfig {
-  /** JOIN_ALERT_HOURS: how long a posted sweat / high-K/D tag stays quiet (live-alerts spec §4.3) */
+  /** JOIN_ALERT_HOURS: how long a posted sweat / high-K/D / Steam veteran tag stays quiet (live-alerts spec §4.3) */
   joinAlertHours: number;
   /** PING_ON: when `live` is left out the hot alert still posts, just without the mention. */
   pingOn: ReadonlySet<PingKind>;
@@ -53,9 +53,10 @@ export function escalate(
         const quiet = last !== undefined && now - last < limitMs;
         const sweat = event.sweat && !quiet;
         const highKd = event.highKd && !quiet;
-        if (!event.watched && !sweat && !highKd) break; // no tag left
-        if (sweat || highKd) state.joinAlerted[event.steamId] = now;
-        out.push({ event: { ...event, sweat, highKd }, ping: false });
+        const steamVeteran = (event.steamVeteran ?? false) && !quiet;
+        if (!event.watched && !sweat && !highKd && !steamVeteran) break; // no tag left
+        if (sweat || highKd || steamVeteran) state.joinAlerted[event.steamId] = now;
+        out.push({ event: { ...event, sweat, highKd, steamVeteran }, ping: false });
         break;
       }
 

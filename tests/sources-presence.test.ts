@@ -303,6 +303,30 @@ describe('join alerts', () => {
     expect(joins(events)[0]).toMatchObject({ serverId: 's1', name: 'Pa', at: new Date(NOW).toISOString() });
   });
 
+  test('arrivals the Steam check names are tagged Steam veteran, with their hours', async () => {
+    const asked: string[][] = [];
+    const stats = { game: { name: 'Rust', minutes: 90_000 } };
+    const veterans = {
+      check: async (ids: string[]) => {
+        asked.push(ids);
+        return new Map([['b', stats]]);
+      }
+    };
+    const s = warm({ presentSteamIds: ['a'] });
+    const summary = summaryOf([{ steamId: 'a' }, { steamId: 'b' }, { steamId: 'c' }]);
+    const events = await pollPresence(panel(summary).client, 's1', s, { ...cfg, veterans }, NOW);
+    expect(asked).toEqual([['b', 'c']]); // arrivals only
+    expect(joins(events)).toEqual([expect.objectContaining({ steamId: 'b', watched: false, steamVeteran: true, veteranStats: stats })]);
+  });
+
+  test('no arrivals, no Steam check', async () => {
+    let calls = 0;
+    const veterans = { check: async () => (calls++, new Map()) };
+    const s = warm({ presentSteamIds: ['a'] });
+    await pollPresence(panel(summaryOf([{ steamId: 'a' }])).client, 's1', s, { ...cfg, veterans }, NOW);
+    expect(calls).toBe(0);
+  });
+
   test("a known player's join carries the numbers that put them on the list", async () => {
     const sweat = { perHour: 18, kills: 180, minutes: 600, range: '30d' };
     const highKd = { kd: 5.2, kills: 52, deaths: 10, matches: 9, range: '30d' };
