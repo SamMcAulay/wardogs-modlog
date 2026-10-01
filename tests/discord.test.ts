@@ -199,7 +199,8 @@ describe('join embed', () => {
       links,
       ROLE
     ).embeds[0]!;
-  const tagsOf = (e: ReturnType<typeof join>) => e.fields!.find((f) => f.name === 'Tags')!.value;
+  const lines = (e: ReturnType<typeof join>) => e.description!.split('\n');
+  const tagsOf = (e: ReturnType<typeof join>) => /^\*\*(.*)\*\*/.exec(lines(e)[0]!)![1];
 
   test('watched only: tier 1, blue, with the dossier hint', () => {
     const e = join({ watched: true });
@@ -207,8 +208,13 @@ describe('join embed', () => {
     expect(tagsOf(e)).toBe('watched');
     expect(e.color).toBe(0x3498db);
     expect(e.footer).toEqual({ text: 'Tier 1 · watchlist' });
-    expect(e.description).toBe('Open the dossier for the watch reason.');
+    expect(lines(e)).toEqual(['**watched** · `765`', 'Open the dossier for the watch reason.']);
     expect(e.url).toBe('https://panel.example.com/server/s1/players/765');
+  });
+
+  test('a join card is description only: no field grid to stretch the channel', () => {
+    expect(join({ watched: true }).fields).toBeUndefined();
+    expect(join({ sweat: true }).fields).toBeUndefined();
   });
 
   test.each([
@@ -228,8 +234,8 @@ describe('join embed', () => {
   });
 
   test('a known join without the watched tag carries no watch-reason hint', () => {
-    expect(join({ sweat: true }).description).toBeUndefined();
-    expect(join({ watched: true, sweat: true }).description).toBe('Open the dossier for the watch reason.');
+    expect(lines(join({ sweat: true }))).toEqual(['**sweat** · `765`']);
+    expect(lines(join({ watched: true, sweat: true }))).toContain('Open the dossier for the watch reason.');
   });
 });
 
@@ -332,28 +338,27 @@ describe('join embed stats', () => {
 
   test("a known sweat's join shows their 30-day rate and playtime", () => {
     const e = embed({ sweat: true, sweatStats });
-    expect(e.fields).toContainEqual({ name: 'Kills/hour (30d)', value: '18.0', inline: true });
-    expect(e.fields).toContainEqual({ name: 'Playtime (30d)', value: '10.0 h', inline: true });
+    expect(e.description).toContain('Kills/hour (30d): **18.0** · 10.0 h played');
   });
 
   test("a known high K/D's join shows their K/D, kills and deaths, and matches", () => {
     const e = embed({ highKd: true, highKdStats });
-    expect(e.fields).toContainEqual({ name: 'K/D (30d)', value: '5.20', inline: true });
-    expect(e.fields).toContainEqual({ name: 'Kills / deaths (30d)', value: '52 / 10', inline: true });
-    expect(e.fields).toContainEqual({ name: 'Matches (30d)', value: '9', inline: true });
+    expect(e.description).toContain('K/D (30d): **5.20** · 52 / 10 · 9 matches');
   });
 
   test('both sets show on one embed, and the tags stay as the summary line', () => {
     const e = embed({ sweat: true, highKd: true, sweatStats, highKdStats });
-    const names = e.fields!.map((f) => f.name);
-    expect(names[0]).toBe('Tags');
-    expect(names).toEqual(expect.arrayContaining(['Kills/hour (30d)', 'K/D (30d)']));
+    expect(e.description!.split('\n')).toEqual([
+      '**sweat · high K/D** · `765`',
+      'Kills/hour (30d): **18.0** · 10.0 h played',
+      'K/D (30d): **5.20** · 52 / 10 · 9 matches'
+    ]);
   });
 
   test('a tag dropped by the daily limit shows no numbers for it', () => {
     // escalate() clears sweat when it is still quiet; the stats alone must not show.
     const e = embed({ watched: true, sweat: false, sweatStats });
-    expect(e.fields!.map((f) => f.name)).not.toContain('Kills/hour (30d)');
+    expect(e.description).not.toContain('Kills/hour');
   });
 });
 
@@ -364,7 +369,7 @@ describe('the Kick button', () => {
 
   test('a join, a hot player and a team kill each carry a Kick button for that player', () => {
     expect(
-      buttonId(msg({ kind: 'playerJoined', serverId: 's1', at, steamId: '76561198000000001', name: 'A', watched: true, sweat: false, highKd: false }))
+      buttonId(msg({ kind: 'playerJoined', serverId: 's1', at, steamId: '76561198000000001', name: 'A', watched: false, sweat: true, highKd: false }))
     ).toBe('kick:s1:76561198000000001');
     expect(
       buttonId(msg({ kind: 'hotPlayer', serverId: 's1', at, steamId: '76561198000000002', name: 'B', kills: 10, deaths: 1, minutes: 20, perHour: 30 }))
@@ -405,14 +410,16 @@ describe('watch reason on joins', () => {
 
   test('a watched join shows why they are watched, straight after the tags', () => {
     const e = join({ watchReason: 'aimbot suspicion' });
-    expect(e.fields![1]).toEqual({ name: 'Watch reason', value: 'aimbot suspicion', inline: false });
-    expect(e.description).toBeUndefined();
+    expect(e.description).toBe('**watched** · `765`\n> aimbot suspicion');
   });
 
   test('without a reason on record it still points at the dossier', () => {
     const e = join({});
-    expect(e.fields!.map((f) => f.name)).not.toContain('Watch reason');
     expect(e.description).toMatch(/dossier/);
+  });
+
+  test('a multi-line reason stays on one quoted line', () => {
+    expect(join({ watchReason: 'aimbot\n\nsuspicion' }).description).toBe('**watched** · `765`\n> aimbot suspicion');
   });
 });
 
@@ -426,7 +433,8 @@ describe('the Watch button', () => {
     expect(labels({ kind: 'hotPlayer', serverId: 's1', at, steamId: '76561198000000002', name: 'B', kills: 10, deaths: 1, minutes: 20, perHour: 30 })).toEqual(['Kick', 'Watch']);
   });
 
-  test('a join by someone already on the watchlist offers Kick only', () => {
-    expect(labels({ kind: 'playerJoined', serverId: 's1', at, steamId: '76561198000000001', name: 'A', watched: true, sweat: false, highKd: false })).toEqual(['Kick']);
+  test('a join by someone already on the watchlist carries no buttons at all', () => {
+    expect(labels({ kind: 'playerJoined', serverId: 's1', at, steamId: '76561198000000001', name: 'A', watched: true, sweat: false, highKd: false })).toBeUndefined();
+    expect(labels({ kind: 'playerJoined', serverId: 's1', at, steamId: '76561198000000001', name: 'A', watched: true, sweat: true, highKd: false })).toBeUndefined();
   });
 });
