@@ -13,6 +13,9 @@ export interface EscalateConfig {
   joinAlertHours: number;
   /** PING_ON: when `live` is left out the hot alert still posts, just without the mention. */
   pingOn: ReadonlySet<PingKind>;
+  /** TEAM_KILL_MIN_COUNT: a killer's team kills this match are counted from the first,
+   *  but only post once the count reaches this. */
+  teamKillMinCount: number;
 }
 
 /**
@@ -42,6 +45,7 @@ export function escalate(
 
         const count = (s.teamKills[event.killer.steamId] ?? 0) + 1;
         s.teamKills[event.killer.steamId] = count;
+        if (count < cfg.teamKillMinCount) break;
         out.push({ event: { ...event, count }, ping: false });
         break;
       }

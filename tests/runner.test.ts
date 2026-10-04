@@ -38,7 +38,7 @@ function deps(over: Partial<CycleDeps> = {}): CycleDeps {
     now: NOW,
     runKd: false,
     logger: silent,
-    escalateConfig: { joinAlertHours: 24, pingOn: new Set(PING_KINDS) },
+    escalateConfig: { joinAlertHours: 24, pingOn: new Set(PING_KINDS), teamKillMinCount: 1 },
     links: { panelPublicUrl: 'https://panel.example.com', serverLabels: {} },
     modRoleId: '999',
     sources: {

@@ -3,7 +3,7 @@ import { escalate, PING_KINDS, type EscalateConfig } from '../src/escalate.js';
 import { emptyState } from '../src/state.js';
 import type { HotPlayerEvent, PlayerJoinedEvent, TeamKillEvent } from '../src/events.js';
 
-const cfg: EscalateConfig = { joinAlertHours: 24, pingOn: new Set(PING_KINDS) };
+const cfg: EscalateConfig = { joinAlertHours: 24, pingOn: new Set(PING_KINDS), teamKillMinCount: 1 };
 const NOW = Date.parse('2026-09-27T12:00:00.000Z');
 const HOUR = 3_600_000;
 
@@ -75,6 +75,33 @@ describe('team kills', () => {
     escalate([tk('a', 300), tk('b', 310)], state, cfg, NOW);
     const out = escalate([tk('c', 5)], state, cfg, NOW);
     expect((out[0]!.event as TeamKillEvent).count).toBe(1);
+  });
+});
+
+describe('team kill threshold', () => {
+  const two: EscalateConfig = { ...cfg, teamKillMinCount: 2 };
+  const counts = (out: ReturnType<typeof escalate>) => out.map((d) => (d.event as TeamKillEvent).count);
+
+  test('a team kill below the threshold is counted but not posted', () => {
+    const out = escalate([tk('a', 10), tk('b', 20), tk('c', 30)], emptyState(), two, NOW);
+    expect(counts(out)).toEqual([2, 3]);
+  });
+
+  test('each killer must reach the threshold on their own', () => {
+    const out = escalate([tk('a', 10, 'X'), tk('b', 20, 'Y'), tk('c', 30, 'X')], emptyState(), two, NOW);
+    expect(out.map((d) => (d.event as TeamKillEvent).eventId)).toEqual(['c']);
+  });
+
+  test('a held-back first kill still counts towards the next cycle', () => {
+    const state = emptyState();
+    expect(escalate([tk('a', 10)], state, two, NOW)).toEqual([]);
+    expect(counts(escalate([tk('b', 20)], state, two, NOW))).toEqual([2]);
+  });
+
+  test('a match boundary resets the count, so the threshold applies again', () => {
+    const state = emptyState();
+    escalate([tk('a', 300), tk('b', 310)], state, two, NOW);
+    expect(escalate([tk('c', 5)], state, two, NOW)).toEqual([]);
   });
 });
 
