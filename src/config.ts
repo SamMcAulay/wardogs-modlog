@@ -38,6 +38,8 @@ export interface Config {
   liveSpikeRatio: number;
   /** live-alerts spec §4.3: how long a sweat / high-K/D join tag stays quiet after posting */
   joinAlertHours: number;
+  /** a killer's team kills post only from this one onward in a match */
+  teamKillMinCount: number;
   /** `/lookup`'s Steam playtime; null leaves those lines reading "not configured" */
   steamApiKey: string | null;
   wardogsAppId: number;
@@ -148,6 +150,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     return parsed;
   };
+  /** Like num, but a whole number. */
+  const int = (key: string, fallback: number): number => {
+    const raw = (env[key] ?? '').trim();
+    if (raw === '') return fallback;
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new Error(`${key} must be a whole number of 1 or more, got: ${raw}`);
+    }
+    return parsed;
+  };
   const range = (key: string, fallback: string): string => {
     const value = (env[key] ?? '').trim() || fallback;
     if (!(BOARD_RANGES as readonly string[]).includes(value)) {
@@ -211,6 +223,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     liveEstablishedHours: numOrOff('LIVE_ESTABLISHED_HOURS', 10),
     liveSpikeRatio: num('LIVE_SPIKE_RATIO', 2),
     joinAlertHours: num('JOIN_ALERT_HOURS', 24),
+    teamKillMinCount: int('TEAM_KILL_MIN_COUNT', 2),
     steamApiKey: opt('STEAM_API_KEY'),
     wardogsAppId: num('WARDOGS_APP_ID', 1867240),
     steamIgnoreAppIds: parseAppIds('STEAM_IGNORE_APP_IDS', env.STEAM_IGNORE_APP_IDS ?? '', DEFAULT_IGNORED_APP_IDS),

@@ -27,6 +27,7 @@ describe('loadConfig', () => {
     expect(c.liveMinMinutes).toBe(20);
     expect(c.liveMinKills).toBe(8);
     expect(c.joinAlertHours).toBe(24);
+    expect(c.teamKillMinCount).toBe(2);
     expect(c.statePath).toBe('/data/state.json');
     expect(c.serverIds).toEqual([]);
     expect(c.serverLabels).toEqual({});
@@ -34,6 +35,14 @@ describe('loadConfig', () => {
     expect(c.steamApiKey).toBeNull();
     expect(c.wardogsAppId).toBe(1867240);
     expect(c.steamIgnoreAppIds).toContain(1366800);
+  });
+
+  test('TEAM_KILL_MIN_COUNT takes a whole number of 1 or more', () => {
+    expect(loadConfig({ ...base, TEAM_KILL_MIN_COUNT: '1' }).teamKillMinCount).toBe(1);
+    expect(loadConfig({ ...base, TEAM_KILL_MIN_COUNT: ' 3 ' }).teamKillMinCount).toBe(3);
+    for (const bad of ['0', '-1', '1.5', 'two']) {
+      expect(() => loadConfig({ ...base, TEAM_KILL_MIN_COUNT: bad })).toThrow(/TEAM_KILL_MIN_COUNT/);
+    }
   });
 
   test('STEAM_IGNORE_APP_IDS replaces the list; none empties it; blank keeps it', () => {

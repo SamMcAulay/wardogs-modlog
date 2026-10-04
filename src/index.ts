@@ -98,7 +98,8 @@ async function main(): Promise<void> {
       logger: log,
       escalateConfig: {
         joinAlertHours: config.joinAlertHours,
-        pingOn: config.pingOn
+        pingOn: config.pingOn,
+        teamKillMinCount: config.teamKillMinCount
       },
       links: { panelPublicUrl: config.panelPublicUrl, serverLabels: config.serverLabels },
       modRoleId: config.discordModRoleId,

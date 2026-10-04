@@ -18,7 +18,7 @@ lists refresh hourly), plus a feed-health warning:
 | 1 | **Watched player joined** | on connect, every time | blue | no |
 | 2 | **Known sweat / high K/D / Steam veteran joined**, with their 30-day kills/hour and playtime, K/D, kills/deaths and matches, or Steam hours | on connect, at most once per `JOIN_ALERT_HOURS` per player | orange | no |
 | 3 | **Hot right now**: `LIVE_PER_HOUR`+ kills an hour this match, over at least `LIVE_MIN_MINUTES` and `LIVE_MIN_KILLS` | during a match, once per player per match | red | yes, unless `PING_ON=none` |
-| — | Team kill (with the killer's running count this match) | | purple | no |
+| — | Team kill (with the killer's running count this match) | from the killer's `TEAM_KILL_MIN_COUNT`th team kill in a match | purple | no |
 | — | Kick, ban, unban by an admin | | grey | no |
 | — | Feed quiet: a configured kill feed silent for `FEED_QUIET_MINUTES` with players on | | brown | no |
 
@@ -250,6 +250,7 @@ this, since server labels are things like `EU#1` and `NA#3`.
 | `LIVE_MIN_KILLS` | Kills this match needed as well (default `8`) |
 | `LIVE_ESTABLISHED_HOURS` | Hours on record (seeding left out) after which a hot player is judged against their own history (default `10`; `0`: everyone with any record is) |
 | `LIVE_SPIKE_RATIO` | How many times their own all-time kills/hour and K/D a regular's match must reach to alert (default `2`) |
+| `TEAM_KILL_MIN_COUNT` | A killer's team kills post from this one onward in a match; earlier ones are counted but not posted (default `2`; `1` posts every one) |
 | `FEED_QUIET_MINUTES` | Minutes a configured feed can go quiet, with players on, before a health warning posts (default `30`) |
 | `STEAM_API_KEY` | Optional. `/lookup`'s Steam playtime and `/id/` links; without it those read "not configured" |
 | `WARDOGS_APP_ID` | Wardogs' Steam app id, for `/lookup`'s Wardogs hours (default `1867240`) |
