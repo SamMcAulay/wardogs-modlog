@@ -219,7 +219,7 @@ workflow trusts `ssh-keyscan` on first contact).
 Every value comes from the environment. `.env` is gitignored — never commit it.
 **Any value containing `#` must be quoted**, or `dotenv` treats the rest of the line
 as a comment and truncates it — `SERVER_LABELS` below is the value most likely to hit
-this, since server labels are things like `EU#1` and `NA#3`.
+this, since server labels are things like `EU#1`.
 
 | Variable | Meaning |
 | --- | --- |
@@ -276,7 +276,7 @@ this, since server labels are things like `EU#1` and `NA#3`.
 
 ## Adding a server
 
-Bringing a new server (e.g. NA#3) under watch takes three steps — miss any one and
+Bringing a new server (e.g. NA-West) under watch takes three steps — miss any one and
 the server either stays silent or preflight fails:
 
 1. Add its id to `SERVER_IDS`.
@@ -286,7 +286,7 @@ the server either stays silent or preflight fails:
    config but has no access to it on the panel.
 
 Once all three are done, its events carry its label the same way every other
-server's do, for example a hot player: `NA#3 · Hot right now — Alpha`.
+server's do, for example a hot player: `NA-West · Hot right now — Alpha`.
 
 A newly added server starts cold, as the first boot does. On its first clean cycle it
 records its position and reports nothing from before, so its history never floods the
